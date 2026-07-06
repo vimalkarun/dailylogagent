@@ -1,13 +1,21 @@
 name: Daily School Log Notification
 
 on:
-  schedule:
-    # 17:00 IST daily (India has no DST, so this offset is stable: 11:30 UTC)
-    - cron: "30 11 * * *"
+  # No `schedule:` trigger here - GitHub's own cron scheduler is "best effort"
+  # and can be delayed unpredictably (sometimes by an hour or more), which is
+  # unacceptable for a daily 5 PM notification. Instead, an external cron
+  # service calls the workflow_dispatch API below at exactly 17:00 IST every
+  # day - see the README for setup. This event also covers manual test runs
+  # from the Actions tab or the API.
   workflow_dispatch:
     inputs:
+      test_run:
+        description: "Set true only for a deliberate manual test with a specific target_date. Leave false for the real daily trigger - it always processes today, ignoring target_date/TARGET_DATE."
+        required: false
+        type: boolean
+        default: false
       target_date:
-        description: "Optional date to process (DD/MM/YYYY). Leave blank to use the TARGET_DATE repo variable, or today if that's blank too."
+        description: "Optional date to process (DD/MM/YYYY). Only used when test_run is true."
         required: false
 
 jobs:
@@ -28,10 +36,12 @@ jobs:
       - name: Resolve target date
         id: resolve
         run: |
-          # Only manual runs may override the date; the scheduled 5 PM run must
-          # always process "today" even if a TARGET_DATE variable was left set
-          # from a previous manual test.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # The real daily trigger (the external cron hitting this same
+          # workflow_dispatch event) never sets test_run, so this defaults to
+          # false and always processes "today" - even if a TARGET_DATE
+          # variable was left set from a previous manual test. Only an
+          # explicit test_run=true dispatch honors target_date/TARGET_DATE.
+          if [ "${{ github.event.inputs.test_run }}" = "true" ]; then
             echo "target_date=${{ github.event.inputs.target_date || vars.TARGET_DATE }}" >> "$GITHUB_OUTPUT"
           else
             echo "target_date=" >> "$GITHUB_OUTPUT"
