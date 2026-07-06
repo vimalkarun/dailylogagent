@@ -113,11 +113,20 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     row = rows.nth(row_index)
     eye_icon = row.locator(".fa-eye")
 
+    # The popup that opens on click has been observed staying permanently
+    # empty, suggesting the click handler throws before it ever populates it.
+    # Capture console/page errors on the main page to see what's failing.
+    console_log: list[str] = []
+    page.on("console", lambda msg: console_log.append(f"[{msg.type}] {msg.text}"))
+    page.on("pageerror", lambda err: console_log.append(f"[pageerror] {err}"))
+
     popup = None
     try:
         async with context.expect_page(timeout=4000) as popup_info:
             await eye_icon.click()
         popup = await popup_info.value
+        popup.on("console", lambda msg: console_log.append(f"[popup:{msg.type}] {msg.text}"))
+        popup.on("pageerror", lambda err: console_log.append(f"[popup:pageerror] {err}"))
         log.info(
             "capture_pdf_bytes: %d page(s) open right after eye-icon click: %s",
             len(context.pages),
@@ -152,6 +161,7 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         pass
     pdf_url = popup.url
     log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
+    log.info("capture_pdf_bytes: console/page errors captured: %s", console_log)
 
     if not pdf_url.startswith(("http://", "https://", "blob:")):
         # The popup's URL never resolved to a real scheme. Inspect its DOM
