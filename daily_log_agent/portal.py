@@ -127,7 +127,13 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         popup = await popup_info.value
         await page.click("#assignmentDetailsClose")
 
-    await popup.wait_for_load_state()
+    # A popup that navigates straight to a PDF is rendered by Chromium's built-in
+    # PDF viewer, which never fires the standard "load" event - so only wait
+    # briefly, best-effort, rather than blocking until Playwright's default timeout.
+    try:
+        await popup.wait_for_load_state("domcontentloaded", timeout=5000)
+    except PlaywrightTimeoutError:
+        pass
     pdf_url = popup.url
     await popup.close()
 
