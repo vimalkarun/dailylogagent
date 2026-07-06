@@ -35,7 +35,7 @@ def compose_message(target_date: date, results: list[dict]) -> str:
 async def run() -> None:
     config = load_config()
     target_date = (
-        datetime.strptime(config.target_date, "%Y-%m-%d").date()
+        datetime.strptime(config.target_date, "%d/%m/%Y").date()
         if config.target_date
         else datetime.now(IST).date()
     )

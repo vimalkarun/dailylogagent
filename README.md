@@ -45,15 +45,27 @@ portal URL differs from the default (`https://entab.online/HISSJR`).
 
 ### 4. Test before trusting the schedule
 Use the **Actions** tab → "Daily School Log Notification" → **Run workflow**
-to trigger it manually (optionally with a specific `target_date`) and confirm
-you get a Telegram message before relying on the 5 PM cron.
+to trigger it manually and confirm you get a Telegram message before relying
+on the 5 PM cron.
+
+If there's no log entry for today (e.g. while testing on a weekend), you can
+point the run at a different date, in `DD/MM/YYYY` format — matching the date
+as it's shown in the portal's own table:
+- Type a date directly into the **target_date** box in the "Run workflow" form, or
+- Set a repository **variable** (Settings → Secrets and variables → Actions →
+  Variables tab, not Secrets — a date isn't sensitive) named `TARGET_DATE` so
+  you don't have to retype it every time you re-run the workflow manually.
+
+Either way only affects manual runs. The scheduled 5 PM run always ignores
+both and processes "today", so a leftover test date can't silently break the
+daily notification.
 
 ## Local testing
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
-cp .env.example .env   # fill in values
+cp .env.example .env   # fill in values (TARGET_DATE is optional, format DD/MM/YYYY)
 set -a && source .env && set +a
 python -m daily_log_agent.main
 ```
