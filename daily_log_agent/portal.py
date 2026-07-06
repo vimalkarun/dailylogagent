@@ -1,3 +1,4 @@
+import base64
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -136,11 +137,28 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     except PlaywrightTimeoutError:
         pass
     pdf_url = popup.url
-    await popup.close()
 
     if not pdf_url or pdf_url == "about:blank":
+        await popup.close()
         return None
 
+    if pdf_url.startswith("blob:"):
+        # A blob: URL only exists inside this tab's JS memory (the portal likely
+        # fetched the PDF as base64 and built an object URL for it) - it isn't a
+        # network resource, so fetch it via the page's own JS context instead.
+        base64_data = await popup.evaluate(
+            """async (url) => {
+                const buf = await (await fetch(url)).arrayBuffer();
+                let binary = "";
+                for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
+                return btoa(binary);
+            }""",
+            pdf_url,
+        )
+        await popup.close()
+        return base64.b64decode(base64_data)
+
+    await popup.close()
     response = await context.request.get(pdf_url)
     if not response.ok:
         return None
