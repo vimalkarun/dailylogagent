@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import re
 from datetime import date, datetime
@@ -126,73 +127,56 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         await page.click("#assignmentDetailsClose")
         return None
 
+    # imageClick() (bound to the thumbnail) was also confirmed by dumping its
+    # source to never call window.open() - it calls getBase64AttachmentsAssignment,
+    # an AJAX call that fetches the PDF as base64. The stray empty popup seen
+    # around every click on this page (url stuck at ':') is unrelated to both
+    # handlers, so intercept the actual API response instead of chasing it.
     try:
-        image_click_src = await page.evaluate(
-            "typeof imageClick === 'function' ? imageClick.toString() : 'imageClick is ' + typeof imageClick"
-        )
-    except Exception as exc:
-        image_click_src = f"<could not evaluate imageClick: {exc!r}>"
-    log.info("capture_pdf_bytes: imageClick source: %s", image_click_src)
-
-    popup = None
-    try:
-        async with context.expect_page(timeout=8000) as popup_info:
+        async with page.expect_response(
+            lambda r: "base64" in r.url.lower(), timeout=10000
+        ) as response_info:
             await thumb.click()
-        popup = await popup_info.value
+        api_response = await response_info.value
+        body_text = await api_response.text()
+        log.info(
+            "capture_pdf_bytes: base64 API response for row %d - url=%r status=%r body preview=%r",
+            row_index,
+            api_response.url,
+            api_response.status,
+            body_text[:500],
+        )
     except PlaywrightTimeoutError:
-        popup = None
+        body_text = None
+        log.warning(
+            "capture_pdf_bytes: no 'base64' API response observed after clicking the thumbnail for row %d",
+            row_index,
+        )
 
     await page.click("#assignmentDetailsClose")
 
-    if popup is None:
-        log.warning(
-            "capture_pdf_bytes: no popup opened after clicking the PDF thumbnail for row %d",
-            row_index,
-        )
+    if not body_text:
         return None
 
     try:
-        await popup.wait_for_url(
-            lambda url: url.startswith(("http://", "https://", "blob:")), timeout=8000
-        )
-    except PlaywrightTimeoutError:
-        pass
-    pdf_url = popup.url
-    log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
-
-    if not pdf_url.startswith(("http://", "https://", "blob:")):
-        try:
-            html = await popup.content()
-        except Exception as exc:
-            html = f"<could not read popup content: {exc!r}>"
-        log.info("capture_pdf_bytes: popup content preview (row %d): %r", row_index, html[:3000])
-
-    if not pdf_url or pdf_url == "about:blank":
-        await popup.close()
+        data = json.loads(body_text)
+    except ValueError:
+        log.warning("capture_pdf_bytes: API response for row %d was not JSON", row_index)
         return None
 
-    if pdf_url.startswith("blob:"):
-        # A blob: URL only exists inside this tab's JS memory (the portal likely
-        # fetched the PDF as base64 and built an object URL for it) - it isn't a
-        # network resource, so fetch it via the page's own JS context instead.
-        base64_data = await popup.evaluate(
-            """async (url) => {
-                const buf = await (await fetch(url)).arrayBuffer();
-                let binary = "";
-                for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
-                return btoa(binary);
-            }""",
-            pdf_url,
-        )
-        await popup.close()
-        return base64.b64decode(base64_data)
+    # The field holding the base64 payload isn't confirmed yet - try the
+    # common candidates seen elsewhere in this portal's API responses.
+    for field in ("result", "Result", "data", "Data", "fileContent", "base64"):
+        value = data.get(field) if isinstance(data, dict) else None
+        if isinstance(value, str) and len(value) > 100:
+            try:
+                return base64.b64decode(value)
+            except Exception:
+                continue
 
-    await popup.close()
-    if not pdf_url.startswith(("http://", "https://")):
-        log.warning("capture_pdf_bytes: unhandled URL scheme for row %d: %r", row_index, pdf_url)
-        return None
-
-    response = await context.request.get(pdf_url)
-    if not response.ok:
-        return None
-    return await response.body()
+    log.warning(
+        "capture_pdf_bytes: could not find a base64 field in API response for row %d - keys: %s",
+        row_index,
+        list(data.keys()) if isinstance(data, dict) else type(data),
+    )
+    return None
