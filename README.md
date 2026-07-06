@@ -80,12 +80,14 @@ python -m daily_log_agent.main
   (login page + `/ParentPortal/ParentAssignment`, July 2026). Entab may change
   markup; if the agent starts failing, re-check `daily_log_agent/portal.py`
   against the current page source.
-- **The "View" click flow is inferred, not directly observed.** The portal's
-  `ParentAssignment.js` (which defines the exact click handler) wasn't
-  available for inspection, so `capture_pdf_bytes()` tries two strategies:
-  a popup opening directly from the eye icon, or an in-page modal with a PDF
-  thumbnail that opens the popup on a second click. If neither matches your
-  portal's actual behavior, this function is the place to adjust.
+- **The "View" click flow is confirmed against a live run, but tied to this
+  portal's current JS.** Clicking the eye icon opens the in-page
+  `.assignment-details` modal (never a popup); clicking the PDF thumbnail
+  inside it triggers an AJAX call whose JSON response contains the real
+  signed S3 URL in a `classDetails` field (despite the endpoint being named
+  `...Base64`). If Entab changes this client-side flow, `capture_pdf_bytes()`
+  in `daily_log_agent/portal.py` is the place to adjust - the function is
+  built to intercept that network response rather than any popup.
 - Any unhandled failure (login error, portal change, etc.) sends a
   `⚠️ School Daily Log Agent failed: ...` Telegram message instead of failing
   silently, so a broken run is never invisible.

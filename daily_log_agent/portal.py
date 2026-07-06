@@ -1,4 +1,4 @@
-import base64
+import json
 import logging
 import re
 from datetime import date, datetime
@@ -113,67 +113,59 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     row = rows.nth(row_index)
     eye_icon = row.locator(".fa-eye")
 
-    popup = None
-    try:
-        async with context.expect_page(timeout=4000) as popup_info:
-            await eye_icon.click()
-        popup = await popup_info.value
-    except PlaywrightTimeoutError:
-        # The eye icon opened the in-page attachment-details modal instead of a
-        # popup directly; the PDF popup only appears after clicking its thumbnail.
-        await page.wait_for_selector(".assignment-details", state="visible", timeout=10000)
-        thumb = page.locator("#caresoulAssignment img").first
-        if await thumb.count() == 0:
-            await page.click("#assignmentDetailsClose")
-            return None
-        async with context.expect_page(timeout=10000) as popup_info:
-            await thumb.click()
-        popup = await popup_info.value
+    # modalOpen() (bound to the eye icon via onclick) was confirmed by dumping
+    # its actual source to only populate the in-page ".assignment-details"
+    # modal - it never calls window.open(). Any popup that opens around this
+    # click is unrelated noise (observed: permanently empty, url stuck at
+    # ':', zero console errors) and must not be treated as the PDF source.
+    await eye_icon.click()
+    await page.wait_for_selector(".assignment-details", state="visible", timeout=10000)
+
+    thumb = page.locator("#caresoulAssignment img").first
+    if await thumb.count() == 0:
         await page.click("#assignmentDetailsClose")
-
-    # The popup opens as "about:blank" first (a common way to dodge popup
-    # blockers) and only navigates to the real signed PDF URL once an async
-    # request resolves, so wait for that navigation rather than any load event
-    # - which a raw PDF response never fires anyway once it does arrive.
-    # It also passes through a fleeting malformed state (observed as the
-    # literal string ":") while transitioning, so match on a real scheme
-    # rather than merely "not blank", or that transient value gets caught
-    # instead of the actual destination URL.
-    try:
-        await popup.wait_for_url(
-            lambda url: url.startswith(("http://", "https://", "blob:")), timeout=15000
-        )
-    except PlaywrightTimeoutError:
-        pass
-    pdf_url = popup.url
-    log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
-
-    if not pdf_url or pdf_url == "about:blank":
-        await popup.close()
         return None
 
-    if pdf_url.startswith("blob:"):
-        # A blob: URL only exists inside this tab's JS memory (the portal likely
-        # fetched the PDF as base64 and built an object URL for it) - it isn't a
-        # network resource, so fetch it via the page's own JS context instead.
-        base64_data = await popup.evaluate(
-            """async (url) => {
-                const buf = await (await fetch(url)).arrayBuffer();
-                let binary = "";
-                for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
-                return btoa(binary);
-            }""",
-            pdf_url,
-        )
-        await popup.close()
-        return base64.b64decode(base64_data)
+    # imageClick() (bound to the thumbnail) also never calls window.open() -
+    # it calls getBase64AttachmentsAssignment, an AJAX call whose response
+    # (despite the endpoint being named "...Base64") holds the real signed
+    # S3 URL directly in its "classDetails" field, not base64-encoded
+    # content. Intercept that response rather than looking for a popup.
+    try:
+        async with page.expect_response(
+            lambda r: "base64" in r.url.lower(), timeout=10000
+        ) as response_info:
+            await thumb.click()
+        api_response = await response_info.value
+        body_text = await api_response.text()
+    except PlaywrightTimeoutError:
+        body_text = None
+        log.warning("capture_pdf_bytes: no attachment API response observed for row %d", row_index)
 
-    await popup.close()
-    if not pdf_url.startswith(("http://", "https://")):
-        log.warning("capture_pdf_bytes: unhandled URL scheme for row %d: %r", row_index, pdf_url)
+    await page.click("#assignmentDetailsClose")
+
+    if not body_text:
+        return None
+
+    try:
+        data = json.loads(body_text)
+    except ValueError:
+        log.warning("capture_pdf_bytes: attachment API response for row %d was not JSON", row_index)
+        return None
+
+    pdf_url = data.get("classDetails") if isinstance(data, dict) else None
+    if not isinstance(pdf_url, str) or not pdf_url.startswith(("http://", "https://")):
+        log.warning(
+            "capture_pdf_bytes: classDetails was not a usable URL for row %d - keys: %s",
+            row_index,
+            list(data.keys()) if isinstance(data, dict) else type(data),
+        )
         return None
 
     response = await context.request.get(pdf_url)
     if not response.ok:
+        log.warning(
+            "capture_pdf_bytes: fetching PDF URL failed for row %d: status=%d", row_index, response.status
+        )
         return None
     return await response.body()

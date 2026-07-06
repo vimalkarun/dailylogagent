@@ -23,13 +23,16 @@ def compose_message(target_date: date, results: list[dict]) -> str:
     if not results:
         return f"{header}\n\nNo daily log entries were posted for today."
 
-    lines = [header, ""]
+    # Most days have exactly one Daily Log entry covering every subject, so
+    # only add a per-entry subheader when there's more than one to tell apart.
+    blocks = []
     for r in results:
-        lines.append(f"<b>[{r['category']}]</b> {r['subject']} - {r['title']}")
-        lines.append(f"Due: {r['due_date']}")
-        lines.append(r["summary"])
-        lines.append("")
-    return "\n".join(lines).strip()
+        if len(results) > 1:
+            due = f" (Due: {r['due_date']})" if r["due_date"] else ""
+            blocks.append(f"<b>{r['title']}</b>{due}\n{r['summary']}")
+        else:
+            blocks.append(r["summary"])
+    return header + "\n\n" + "\n\n---\n\n".join(blocks)
 
 
 async def run() -> None:
@@ -65,7 +68,6 @@ async def run() -> None:
                 except Exception:
                     log.exception("Failed to process entry %r - sending metadata only", entry["title"])
                     categorized = {
-                        "category": "Other",
                         "summary": "Could not read this entry's PDF automatically - please check the portal directly.",
                     }
                 results.append({**entry, **categorized})
