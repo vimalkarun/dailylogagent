@@ -51,9 +51,16 @@ async def run() -> None:
 
             client = Anthropic(api_key=config.anthropic_api_key)
             for entry in entries:
-                pdf_bytes = await capture_pdf_bytes(context, page, entry["row_index"])
-                pdf_text = extract_text(pdf_bytes) if pdf_bytes else ""
-                categorized = categorize_entry(client, config.anthropic_model, entry, pdf_text)
+                try:
+                    pdf_bytes = await capture_pdf_bytes(context, page, entry["row_index"])
+                    pdf_text = extract_text(pdf_bytes) if pdf_bytes else ""
+                    categorized = categorize_entry(client, config.anthropic_model, entry, pdf_text)
+                except Exception:
+                    log.exception("Failed to process entry %r - sending metadata only", entry["title"])
+                    categorized = {
+                        "category": "Other",
+                        "summary": "Could not read this entry's PDF automatically - please check the portal directly.",
+                    }
                 results.append({**entry, **categorized})
         finally:
             await browser.close()
