@@ -126,11 +126,11 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         await page.click("#assignmentDetailsClose")
         return None
 
-    # imageClick() (bound to the thumbnail) was also confirmed by dumping its
-    # source to never call window.open() - it calls getBase64AttachmentsAssignment,
-    # an AJAX call that fetches the PDF as base64. The stray empty popup seen
-    # around every click on this page (url stuck at ':') is unrelated to both
-    # handlers, so intercept the actual API response instead of chasing it.
+    # imageClick() (bound to the thumbnail) also never calls window.open() -
+    # it calls getBase64AttachmentsAssignment, an AJAX call whose response
+    # (despite the endpoint being named "...Base64") holds the real signed
+    # S3 URL directly in its "classDetails" field, not base64-encoded
+    # content. Intercept that response rather than looking for a popup.
     try:
         async with page.expect_response(
             lambda r: "base64" in r.url.lower(), timeout=10000
@@ -138,19 +138,9 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
             await thumb.click()
         api_response = await response_info.value
         body_text = await api_response.text()
-        log.info(
-            "capture_pdf_bytes: base64 API response for row %d - url=%r status=%r body preview=%r",
-            row_index,
-            api_response.url,
-            api_response.status,
-            body_text[:500],
-        )
     except PlaywrightTimeoutError:
         body_text = None
-        log.warning(
-            "capture_pdf_bytes: no 'base64' API response observed after clicking the thumbnail for row %d",
-            row_index,
-        )
+        log.warning("capture_pdf_bytes: no attachment API response observed for row %d", row_index)
 
     await page.click("#assignmentDetailsClose")
 
@@ -160,31 +150,22 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     try:
         data = json.loads(body_text)
     except ValueError:
-        log.warning("capture_pdf_bytes: API response for row %d was not JSON", row_index)
+        log.warning("capture_pdf_bytes: attachment API response for row %d was not JSON", row_index)
         return None
 
-    if not isinstance(data, dict):
-        log.warning("capture_pdf_bytes: API response for row %d was not a JSON object", row_index)
+    pdf_url = data.get("classDetails") if isinstance(data, dict) else None
+    if not isinstance(pdf_url, str) or not pdf_url.startswith(("http://", "https://")):
+        log.warning(
+            "capture_pdf_bytes: classDetails was not a usable URL for row %d - keys: %s",
+            row_index,
+            list(data.keys()) if isinstance(data, dict) else type(data),
+        )
         return None
 
-    # Despite the endpoint being named "...Base64", classDetails actually
-    # holds the real signed S3 URL directly rather than base64 content -
-    # confirmed directly from the API response.
-    pdf_url = data.get("classDetails")
-    if isinstance(pdf_url, str) and pdf_url.startswith(("http://", "https://")):
-        response = await context.request.get(pdf_url)
-        if not response.ok:
-            log.warning(
-                "capture_pdf_bytes: fetching classDetails URL failed for row %d: status=%d",
-                row_index,
-                response.status,
-            )
-            return None
-        return await response.body()
-
-    log.warning(
-        "capture_pdf_bytes: classDetails was not a usable URL for row %d - keys: %s",
-        row_index,
-        list(data.keys()),
-    )
-    return None
+    response = await context.request.get(pdf_url)
+    if not response.ok:
+        log.warning(
+            "capture_pdf_bytes: fetching PDF URL failed for row %d: status=%d", row_index, response.status
+        )
+        return None
+    return await response.body()
