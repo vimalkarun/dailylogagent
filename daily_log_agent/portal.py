@@ -135,8 +135,14 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     # blockers) and only navigates to the real signed PDF URL once an async
     # request resolves, so wait for that navigation rather than any load event
     # - which a raw PDF response never fires anyway once it does arrive.
+    # It also passes through a fleeting malformed state (observed as the
+    # literal string ":") while transitioning, so match on a real scheme
+    # rather than merely "not blank", or that transient value gets caught
+    # instead of the actual destination URL.
     try:
-        await popup.wait_for_url(lambda url: url not in ("about:blank", ""), timeout=15000)
+        await popup.wait_for_url(
+            lambda url: url.startswith(("http://", "https://", "blob:")), timeout=15000
+        )
     except PlaywrightTimeoutError:
         pass
     pdf_url = popup.url
