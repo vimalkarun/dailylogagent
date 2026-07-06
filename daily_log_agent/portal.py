@@ -118,6 +118,11 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         async with context.expect_page(timeout=4000) as popup_info:
             await eye_icon.click()
         popup = await popup_info.value
+        log.info(
+            "capture_pdf_bytes: %d page(s) open right after eye-icon click: %s",
+            len(context.pages),
+            [p.url for p in context.pages],
+        )
     except PlaywrightTimeoutError:
         # The eye icon opened the in-page attachment-details modal instead of a
         # popup directly; the PDF popup only appears after clicking its thumbnail.
@@ -144,7 +149,11 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
             lambda url: url.startswith(("http://", "https://", "blob:")), timeout=15000
         )
     except PlaywrightTimeoutError:
-        pass
+        log.info(
+            "capture_pdf_bytes: timed out waiting for a real URL; %d page(s) open now: %s",
+            len(context.pages),
+            [p.url for p in context.pages],
+        )
     pdf_url = popup.url
     log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
 
