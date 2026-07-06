@@ -1,4 +1,5 @@
 import base64
+import logging
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -6,6 +7,8 @@ from urllib.parse import urljoin
 
 from playwright.async_api import BrowserContext, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+log = logging.getLogger("daily_log_agent.portal")
 
 DASHBOARD_URL_RE = re.compile(r".*/(ParentPortal|StudentPortal|StaffPortal)/.*Dashboard")
 ASSIGNMENT_PATH = "/ParentPortal/ParentAssignment"
@@ -137,6 +140,7 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     except PlaywrightTimeoutError:
         pass
     pdf_url = popup.url
+    log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
 
     if not pdf_url or pdf_url == "about:blank":
         await popup.close()
@@ -159,6 +163,10 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         return base64.b64decode(base64_data)
 
     await popup.close()
+    if not pdf_url.startswith(("http://", "https://")):
+        log.warning("capture_pdf_bytes: unhandled URL scheme for row %d: %r", row_index, pdf_url)
+        return None
+
     response = await context.request.get(pdf_url)
     if not response.ok:
         return None
