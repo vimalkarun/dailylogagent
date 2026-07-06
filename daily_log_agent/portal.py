@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import re
@@ -164,19 +163,28 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         log.warning("capture_pdf_bytes: API response for row %d was not JSON", row_index)
         return None
 
-    # The field holding the base64 payload isn't confirmed yet - try the
-    # common candidates seen elsewhere in this portal's API responses.
-    for field in ("result", "Result", "data", "Data", "fileContent", "base64"):
-        value = data.get(field) if isinstance(data, dict) else None
-        if isinstance(value, str) and len(value) > 100:
-            try:
-                return base64.b64decode(value)
-            except Exception:
-                continue
+    if not isinstance(data, dict):
+        log.warning("capture_pdf_bytes: API response for row %d was not a JSON object", row_index)
+        return None
+
+    # Despite the endpoint being named "...Base64", classDetails actually
+    # holds the real signed S3 URL directly rather than base64 content -
+    # confirmed directly from the API response.
+    pdf_url = data.get("classDetails")
+    if isinstance(pdf_url, str) and pdf_url.startswith(("http://", "https://")):
+        response = await context.request.get(pdf_url)
+        if not response.ok:
+            log.warning(
+                "capture_pdf_bytes: fetching classDetails URL failed for row %d: status=%d",
+                row_index,
+                response.status,
+            )
+            return None
+        return await response.body()
 
     log.warning(
-        "capture_pdf_bytes: could not find a base64 field in API response for row %d - keys: %s",
+        "capture_pdf_bytes: classDetails was not a usable URL for row %d - keys: %s",
         row_index,
-        list(data.keys()) if isinstance(data, dict) else type(data),
+        list(data.keys()),
     )
     return None
