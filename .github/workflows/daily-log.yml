@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: "Optional date to process (YYYY-MM-DD). Leave blank for today."
+        description: "Optional date to process (DD/MM/YYYY). Leave blank to use the TARGET_DATE repo variable, or today if that's blank too."
         required: false
 
 jobs:
@@ -25,6 +25,18 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
+      - name: Resolve target date
+        id: resolve
+        run: |
+          # Only manual runs may override the date; the scheduled 5 PM run must
+          # always process "today" even if a TARGET_DATE variable was left set
+          # from a previous manual test.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target_date=${{ github.event.inputs.target_date || vars.TARGET_DATE }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "target_date=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run daily log agent
         env:
           SCHOOL_BASE_URL: ${{ vars.SCHOOL_BASE_URL }}
@@ -33,5 +45,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TARGET_DATE: ${{ github.event.inputs.target_date }}
+          TARGET_DATE: ${{ steps.resolve.outputs.target_date }}
         run: python -m daily_log_agent.main
