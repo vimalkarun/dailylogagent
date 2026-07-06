@@ -114,8 +114,17 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     eye_icon = row.locator(".fa-eye")
 
     # The popup that opens on click has been observed staying permanently
-    # empty, suggesting the click handler throws before it ever populates it.
-    # Capture console/page errors on the main page to see what's failing.
+    # empty with zero console/page errors, which rules out both timing and
+    # exceptions. Dump modalOpen's actual source (it's the plain global
+    # function bound via onclick="modalOpen(event)") to see what it does.
+    try:
+        modal_open_src = await page.evaluate(
+            "typeof modalOpen === 'function' ? modalOpen.toString() : 'modalOpen is ' + typeof modalOpen"
+        )
+    except Exception as exc:
+        modal_open_src = f"<could not evaluate modalOpen: {exc!r}>"
+    log.info("capture_pdf_bytes: modalOpen source: %s", modal_open_src)
+
     console_log: list[str] = []
     page.on("console", lambda msg: console_log.append(f"[{msg.type}] {msg.text}"))
     page.on("pageerror", lambda err: console_log.append(f"[pageerror] {err}"))
