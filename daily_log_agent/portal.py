@@ -146,16 +146,35 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     # instead of the actual destination URL.
     try:
         await popup.wait_for_url(
-            lambda url: url.startswith(("http://", "https://", "blob:")), timeout=15000
+            lambda url: url.startswith(("http://", "https://", "blob:")), timeout=8000
         )
     except PlaywrightTimeoutError:
-        log.info(
-            "capture_pdf_bytes: timed out waiting for a real URL; %d page(s) open now: %s",
-            len(context.pages),
-            [p.url for p in context.pages],
-        )
+        pass
     pdf_url = popup.url
     log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
+
+    if not pdf_url.startswith(("http://", "https://", "blob:")):
+        # The popup's URL never resolved to a real scheme. Inspect its DOM
+        # directly in case the PDF is rendered inline (e.g. via document.write
+        # with an embedded viewer or base64 data) without the popup's own URL
+        # ever changing, rather than assuming the URL-based approach applies.
+        try:
+            html = await popup.content()
+        except Exception as exc:
+            html = f"<could not read popup content: {exc!r}>"
+        log.info("capture_pdf_bytes: popup content preview (row %d): %r", row_index, html[:3000])
+
+        for selector, attr in (
+            ("embed[src]", "src"),
+            ("iframe[src]", "src"),
+            ("object[data]", "data"),
+            ("a[href*='.pdf']", "href"),
+            ("a[href*='amazonaws']", "href"),
+        ):
+            loc = popup.locator(selector)
+            if await loc.count() > 0:
+                found = await loc.first.get_attribute(attr)
+                log.info("capture_pdf_bytes: found %s -> %r", selector, found)
 
     if not pdf_url or pdf_url == "about:blank":
         await popup.close()
