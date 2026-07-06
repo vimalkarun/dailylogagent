@@ -24,12 +24,12 @@ def _require(name: str) -> str:
 
 def load_config() -> Config:
     return Config(
-        base_url=os.environ.get("SCHOOL_BASE_URL", "https://entab.online/HISSJR"),
+        base_url=os.environ.get("SCHOOL_BASE_URL") or "https://entab.online/HISSJR",
         user_id=_require("SCHOOL_USER_ID"),
         password=_require("SCHOOL_PASSWORD"),
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_require("TELEGRAM_CHAT_ID"),
         anthropic_api_key=_require("ANTHROPIC_API_KEY"),
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001",
         target_date=os.environ.get("TARGET_DATE"),
     )
