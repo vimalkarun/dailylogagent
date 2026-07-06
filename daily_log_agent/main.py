@@ -3,11 +3,10 @@ import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from anthropic import Anthropic
 from playwright.async_api import async_playwright
 
-from .categorize import categorize_entry
-from .config import load_config
+from .categorize import categorize_with_anthropic, categorize_with_gemini
+from .config import Config, load_config
 from .pdf_text import extract_text
 from .portal import capture_pdf_bytes, get_todays_entries, login
 from .telegram import send_message
@@ -16,6 +15,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("daily_log_agent")
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def _build_ai_client(config: Config):
+    """Returns (categorize_fn, client, model) for the configured AI provider."""
+    if config.ai_provider == "gemini":
+        from google import genai
+
+        return categorize_with_gemini, genai.Client(api_key=config.gemini_api_key), config.gemini_model
+
+    from anthropic import Anthropic
+
+    return categorize_with_anthropic, Anthropic(api_key=config.anthropic_api_key), config.anthropic_model
 
 
 def compose_message(target_date: date, results: list[dict]) -> str:
@@ -52,7 +63,8 @@ async def run() -> None:
             entries = await get_todays_entries(page, target_date)
             log.info("Found %d daily log entr(y/ies) for %s", len(entries), target_date)
 
-            client = Anthropic(api_key=config.anthropic_api_key)
+            categorize_fn, ai_client, ai_model = _build_ai_client(config)
+            log.info("Using AI provider: %s (model %s)", config.ai_provider, ai_model)
             for entry in entries:
                 try:
                     pdf_bytes = await capture_pdf_bytes(context, page, entry["row_index"])
@@ -64,7 +76,7 @@ async def run() -> None:
                         len(pdf_text),
                         pdf_text[:300],
                     )
-                    categorized = categorize_entry(client, config.anthropic_model, entry, pdf_text)
+                    categorized = categorize_fn(ai_client, ai_model, entry, pdf_text)
                 except Exception:
                     log.exception("Failed to process entry %r - sending metadata only", entry["title"])
                     categorized = {

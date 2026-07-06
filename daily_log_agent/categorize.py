@@ -1,5 +1,3 @@
-from anthropic import Anthropic
-
 PROMPT_TEMPLATE = """You are preparing a Telegram-ready summary of a school Daily Log for a parent.
 
 Entry metadata:
@@ -44,17 +42,25 @@ Notes:
 """
 
 
-def categorize_entry(client: Anthropic, model: str, entry: dict, pdf_text: str) -> dict:
-    prompt = PROMPT_TEMPLATE.format(
+def _build_prompt(entry: dict, pdf_text: str) -> str:
+    return PROMPT_TEMPLATE.format(
         title=entry["title"],
         type_name=entry["type_name"],
         assignment_date=entry["assignment_date"],
         due_date=entry["due_date"],
         pdf_text=pdf_text[:8000] or "(no text could be extracted from the PDF)",
     )
+
+
+def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:
     response = client.messages.create(
         model=model,
         max_tokens=800,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": _build_prompt(entry, pdf_text)}],
     )
     return {"summary": response.content[0].text.strip()}
+
+
+def categorize_with_gemini(client, model: str, entry: dict, pdf_text: str) -> dict:
+    response = client.models.generate_content(model=model, contents=_build_prompt(entry, pdf_text))
+    return {"summary": response.text.strip()}

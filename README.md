@@ -2,7 +2,7 @@
 
 Logs into the Entab CampusCare10X parent portal every day, reads today's
 Daily Assignment/Log entries, downloads and categorizes each PDF using
-Claude, and sends a summary to Telegram.
+Claude or Gemini, and sends a summary to Telegram.
 
 ## How it works
 
@@ -13,9 +13,9 @@ Claude, and sends a summary to Telegram.
    today (Asia/Kolkata), then clicks each row's "View" icon and captures the
    resulting PDF from the popup window.
 3. `pdf_text.py` extracts text from each PDF; `categorize.py` sends that text
-   to Claude (Anthropic API) to classify it (Homework / Exam-Test /
-   Practice-Learning / Project / Circular-Notice / Other) and produce a short
-   parent-friendly summary.
+   to an AI provider (Claude via Anthropic, or Gemini via Google - selected by
+   the `AI_PROVIDER` setting) to produce a per-subject summary with bolded
+   Homework and Exam/Test Intimation sections.
 4. `telegram.py` sends the compiled summary to a Telegram chat.
 5. `.github/workflows/daily-log.yml` runs this on a schedule (17:00 IST daily)
    via GitHub Actions.
@@ -29,19 +29,29 @@ Claude, and sends a summary to Telegram.
 3. Visit `https://api.telegram.org/bot<token>/getUpdates` in a browser and
    find `"chat":{"id": ...}` — that number is your `TELEGRAM_CHAT_ID`.
 
-### 2. Anthropic API key
-Create a key at [console.anthropic.com](https://console.anthropic.com).
+### 2. AI provider API key
+Pick one (both can be configured; only the selected one needs a real key):
+- **Anthropic (default)**: create a key at [console.anthropic.com](https://console.anthropic.com).
+- **Gemini**: create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
-### 3. GitHub repository secrets
-In this repo's Settings → Secrets and variables → Actions, add:
+### 3. GitHub repository secrets and variables
+In this repo's Settings → Secrets and variables → Actions:
+
+**Secrets** (Secrets tab):
 - `SCHOOL_USER_ID`
 - `SCHOOL_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_API_KEY` (if using Anthropic)
+- `GEMINI_API_KEY` (if using Gemini)
 
-Optionally add a repository **variable** `SCHOOL_BASE_URL` if your school's
-portal URL differs from the default (`https://entab.online/HISSJR`).
+**Variables** (Variables tab — not secrets, since none of these are sensitive):
+- `SCHOOL_BASE_URL` — optional, only if your school's portal URL differs from
+  the default (`https://entab.online/HISSJR`)
+- `AI_PROVIDER` — optional, `anthropic` (default) or `gemini`; this is the
+  switch that picks which AI provider categorizes the log
+- `ANTHROPIC_MODEL` / `GEMINI_MODEL` — optional, override the default model
+  for whichever provider you're using
 
 ### 4. Test before trusting the schedule
 Use the **Actions** tab → "Daily School Log Notification" → **Run workflow**
