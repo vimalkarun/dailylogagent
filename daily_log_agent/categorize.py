@@ -18,8 +18,13 @@ Full text extracted from the attached PDF:
 {pdf_text}
 ---
 
+Note: a short alphanumeric code like "7 F" in a title typically refers to the
+class and section (e.g. Class 7, Section F), not a grade or mark. Only report
+a grade/score if the PDF text explicitly states one.
+
 Classify this entry into exactly one category from: {categories}.
 Then write a one or two sentence, parent-friendly summary of what the child needs to do, including any dates that matter.
+If the extracted PDF text is empty, garbled, or too sparse to summarize confidently, say so plainly instead of guessing at what it might mean.
 
 Respond in exactly this format, nothing else:
 Category: <category>

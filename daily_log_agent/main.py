@@ -54,6 +54,13 @@ async def run() -> None:
                 try:
                     pdf_bytes = await capture_pdf_bytes(context, page, entry["row_index"])
                     pdf_text = extract_text(pdf_bytes) if pdf_bytes else ""
+                    log.info(
+                        "Entry %r: downloaded %s bytes, extracted %d chars of text. Preview: %r",
+                        entry["title"],
+                        len(pdf_bytes) if pdf_bytes else 0,
+                        len(pdf_text),
+                        pdf_text[:300],
+                    )
                     categorized = categorize_entry(client, config.anthropic_model, entry, pdf_text)
                 except Exception:
                     log.exception("Failed to process entry %r - sending metadata only", entry["title"])
