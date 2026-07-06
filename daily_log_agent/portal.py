@@ -113,55 +113,44 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
     row = rows.nth(row_index)
     eye_icon = row.locator(".fa-eye")
 
-    # The popup that opens on click has been observed staying permanently
-    # empty with zero console/page errors, which rules out both timing and
-    # exceptions. Dump modalOpen's actual source (it's the plain global
-    # function bound via onclick="modalOpen(event)") to see what it does.
+    # modalOpen() (bound to the eye icon via onclick) was confirmed by dumping
+    # its actual source to only populate the in-page ".assignment-details"
+    # modal - it never calls window.open(). Any popup that opens around this
+    # click is unrelated noise (observed: permanently empty, url stuck at
+    # ':', zero console errors) and must not be treated as the PDF source.
+    await eye_icon.click()
+    await page.wait_for_selector(".assignment-details", state="visible", timeout=10000)
+
+    thumb = page.locator("#caresoulAssignment img").first
+    if await thumb.count() == 0:
+        await page.click("#assignmentDetailsClose")
+        return None
+
     try:
-        modal_open_src = await page.evaluate(
-            "typeof modalOpen === 'function' ? modalOpen.toString() : 'modalOpen is ' + typeof modalOpen"
+        image_click_src = await page.evaluate(
+            "typeof imageClick === 'function' ? imageClick.toString() : 'imageClick is ' + typeof imageClick"
         )
     except Exception as exc:
-        modal_open_src = f"<could not evaluate modalOpen: {exc!r}>"
-    log.info("capture_pdf_bytes: modalOpen source: %s", modal_open_src)
-
-    console_log: list[str] = []
-    page.on("console", lambda msg: console_log.append(f"[{msg.type}] {msg.text}"))
-    page.on("pageerror", lambda err: console_log.append(f"[pageerror] {err}"))
+        image_click_src = f"<could not evaluate imageClick: {exc!r}>"
+    log.info("capture_pdf_bytes: imageClick source: %s", image_click_src)
 
     popup = None
     try:
-        async with context.expect_page(timeout=4000) as popup_info:
-            await eye_icon.click()
-        popup = await popup_info.value
-        popup.on("console", lambda msg: console_log.append(f"[popup:{msg.type}] {msg.text}"))
-        popup.on("pageerror", lambda err: console_log.append(f"[popup:pageerror] {err}"))
-        log.info(
-            "capture_pdf_bytes: %d page(s) open right after eye-icon click: %s",
-            len(context.pages),
-            [p.url for p in context.pages],
-        )
-    except PlaywrightTimeoutError:
-        # The eye icon opened the in-page attachment-details modal instead of a
-        # popup directly; the PDF popup only appears after clicking its thumbnail.
-        await page.wait_for_selector(".assignment-details", state="visible", timeout=10000)
-        thumb = page.locator("#caresoulAssignment img").first
-        if await thumb.count() == 0:
-            await page.click("#assignmentDetailsClose")
-            return None
-        async with context.expect_page(timeout=10000) as popup_info:
+        async with context.expect_page(timeout=8000) as popup_info:
             await thumb.click()
         popup = await popup_info.value
-        await page.click("#assignmentDetailsClose")
+    except PlaywrightTimeoutError:
+        popup = None
 
-    # The popup opens as "about:blank" first (a common way to dodge popup
-    # blockers) and only navigates to the real signed PDF URL once an async
-    # request resolves, so wait for that navigation rather than any load event
-    # - which a raw PDF response never fires anyway once it does arrive.
-    # It also passes through a fleeting malformed state (observed as the
-    # literal string ":") while transitioning, so match on a real scheme
-    # rather than merely "not blank", or that transient value gets caught
-    # instead of the actual destination URL.
+    await page.click("#assignmentDetailsClose")
+
+    if popup is None:
+        log.warning(
+            "capture_pdf_bytes: no popup opened after clicking the PDF thumbnail for row %d",
+            row_index,
+        )
+        return None
+
     try:
         await popup.wait_for_url(
             lambda url: url.startswith(("http://", "https://", "blob:")), timeout=8000
@@ -170,30 +159,13 @@ async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int)
         pass
     pdf_url = popup.url
     log.info("capture_pdf_bytes: popup URL for row %d is %r", row_index, pdf_url)
-    log.info("capture_pdf_bytes: console/page errors captured: %s", console_log)
 
     if not pdf_url.startswith(("http://", "https://", "blob:")):
-        # The popup's URL never resolved to a real scheme. Inspect its DOM
-        # directly in case the PDF is rendered inline (e.g. via document.write
-        # with an embedded viewer or base64 data) without the popup's own URL
-        # ever changing, rather than assuming the URL-based approach applies.
         try:
             html = await popup.content()
         except Exception as exc:
             html = f"<could not read popup content: {exc!r}>"
         log.info("capture_pdf_bytes: popup content preview (row %d): %r", row_index, html[:3000])
-
-        for selector, attr in (
-            ("embed[src]", "src"),
-            ("iframe[src]", "src"),
-            ("object[data]", "data"),
-            ("a[href*='.pdf']", "href"),
-            ("a[href*='amazonaws']", "href"),
-        ):
-            loc = popup.locator(selector)
-            if await loc.count() > 0:
-                found = await loc.first.get_attribute(attr)
-                log.info("capture_pdf_bytes: found %s -> %r", selector, found)
 
     if not pdf_url or pdf_url == "about:blank":
         await popup.close()
