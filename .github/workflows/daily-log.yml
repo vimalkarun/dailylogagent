@@ -1,0 +1,37 @@
+name: Daily School Log Notification
+
+on:
+  schedule:
+    # 17:00 IST daily (India has no DST, so this offset is stable: 11:30 UTC)
+    - cron: "30 11 * * *"
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Optional date to process (YYYY-MM-DD). Leave blank for today."
+        required: false
+
+jobs:
+  send-daily-log:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run daily log agent
+        env:
+          SCHOOL_BASE_URL: ${{ vars.SCHOOL_BASE_URL }}
+          SCHOOL_USER_ID: ${{ secrets.SCHOOL_USER_ID }}
+          SCHOOL_PASSWORD: ${{ secrets.SCHOOL_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+        run: python -m daily_log_agent.main
