@@ -145,12 +145,15 @@ async def get_todays_circulars(page: Page, target_date: date) -> list[dict]:
 
     rows = page.locator("#gridCircular .e-gridcontent .e-row")
     count = await rows.count()
+    log.info("Circular grid has %d total row(s)", count)
 
     circulars = []
+    seen_dates = []
     for i in range(count):
         row = rows.nth(i)
         cells = row.locator(".e-rowcell")
         circular_date_text = await cells.nth(CIRCULAR_CELL_INDEX["circular_date"]).inner_text()
+        seen_dates.append(circular_date_text.strip())
         if _parse_circular_date(circular_date_text) != target_date:
             continue
         circulars.append(
@@ -162,6 +165,8 @@ async def get_todays_circulars(page: Page, target_date: date) -> list[dict]:
                 "type_name": (await cells.nth(CIRCULAR_CELL_INDEX["type"]).inner_text()).strip(),
             }
         )
+    if count and not circulars:
+        log.info("No circulars matched %s - grid's Circular Date values were: %s", target_date, seen_dates[:20])
     return circulars
 
 
