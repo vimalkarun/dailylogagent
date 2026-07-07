@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 VALID_PROVIDERS = ("anthropic", "gemini")
+VALID_CIRCULAR_DELIVERY_MODES = ("summary", "raw")
 
 
 @dataclass
@@ -18,6 +19,7 @@ class Config:
     gemini_api_key: Optional[str]
     gemini_model: str
     target_date: Optional[str]
+    circular_delivery_mode: str
 
 
 def _require(name: str) -> str:
@@ -32,6 +34,12 @@ def load_config() -> Config:
     if ai_provider not in VALID_PROVIDERS:
         raise RuntimeError(f"AI_PROVIDER must be one of {VALID_PROVIDERS}, got {ai_provider!r}")
 
+    circular_delivery_mode = (os.environ.get("CIRCULAR_DELIVERY_MODE") or "summary").strip().lower()
+    if circular_delivery_mode not in VALID_CIRCULAR_DELIVERY_MODES:
+        raise RuntimeError(
+            f"CIRCULAR_DELIVERY_MODE must be one of {VALID_CIRCULAR_DELIVERY_MODES}, got {circular_delivery_mode!r}"
+        )
+
     return Config(
         base_url=os.environ.get("SCHOOL_BASE_URL") or "https://entab.online/HISSJR",
         user_id=_require("SCHOOL_USER_ID"),
@@ -44,4 +52,5 @@ def load_config() -> Config:
         gemini_api_key=_require("GEMINI_API_KEY") if ai_provider == "gemini" else os.environ.get("GEMINI_API_KEY"),
         gemini_model=os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash",
         target_date=os.environ.get("TARGET_DATE"),
+        circular_delivery_mode=circular_delivery_mode,
     )
