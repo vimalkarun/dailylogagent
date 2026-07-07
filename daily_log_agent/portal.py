@@ -177,10 +177,28 @@ async def capture_circular_details(context: BrowserContext, page: Page, row_inde
 
     # viewClick() (bound to the eye icon) mirrors modalOpen() on the Assignment
     # page: it populates the in-page ".timetable-details" panel rather than
-    # opening a real popup. The user observed this panel can take ~15s to
-    # render, hence the generous timeout below.
+    # opening a real popup.
     await eye_icon.click()
     await page.wait_for_selector(".timetable-details", state="visible", timeout=30000)
+
+    # The panel becomes visible well before its content does - #circularDescription
+    # and #caresoul are filled in by a separate async call afterwards (confirmed
+    # live: reading them right after visibility gave 0 chars / 0 thumbnails for a
+    # circular that does have both). The user's observed ~15s render time is this
+    # content-fill, not the panel's own visibility, so wait for actual content.
+    try:
+        await page.wait_for_function(
+            """() => {
+                const desc = document.querySelector('#circularDescription');
+                const imgs = document.querySelectorAll('#caresoul img');
+                return (desc && desc.innerText.trim().length > 0) || imgs.length > 0;
+            }""",
+            timeout=20000,
+        )
+    except PlaywrightTimeoutError:
+        log.warning(
+            "capture_circular_details: description/attachment never populated for row %d", row_index
+        )
 
     description = (await page.locator("#circularDescription").inner_text()).strip()
 
