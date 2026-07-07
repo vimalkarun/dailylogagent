@@ -59,5 +59,6 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          CIRCULAR_DELIVERY_MODE: ${{ vars.CIRCULAR_DELIVERY_MODE }}
           TARGET_DATE: ${{ steps.resolve.outputs.target_date }}
         run: python -m daily_log_agent.main

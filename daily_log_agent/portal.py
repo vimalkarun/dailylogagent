@@ -12,6 +12,7 @@ log = logging.getLogger("daily_log_agent.portal")
 
 DASHBOARD_URL_RE = re.compile(r".*/(ParentPortal|StudentPortal|StaffPortal)/.*Dashboard")
 ASSIGNMENT_PATH = "/ParentPortal/ParentAssignment"
+CIRCULAR_PATH = "/ParentPortal/ParentCircular"
 
 # Column order matches the Syncfusion grid config on ParentAssignment.
 CELL_INDEX = {
@@ -21,6 +22,15 @@ CELL_INDEX = {
     "due_date": 3,
     "subject": 4,
     "type": 5,
+}
+
+# Column order matches the Syncfusion grid config on ParentCircular. The first
+# column (ContentID) is hidden but still renders a cell, same as ParentAssignment.
+CIRCULAR_CELL_INDEX = {
+    "title": 1,
+    "circular_date": 2,
+    "due_date": 3,
+    "type": 4,
 }
 
 
@@ -75,6 +85,16 @@ def _parse_grid_date(text: str) -> Optional[date]:
     return datetime.strptime(text, "%d/%m/%Y").date()
 
 
+def _parse_circular_date(text: str) -> Optional[date]:
+    # ParentCircular's grid renders CDate/DueDate with a customFormat of
+    # "dd/MM/yyyy hh:mm a" (e.g. "07/07/2026 04:35 AM"), unlike the plain
+    # "dd/MM/yyyy" used on ParentAssignment.
+    text = text.strip()
+    if not text:
+        return None
+    return datetime.strptime(text, "%d/%m/%Y %I:%M %p").date()
+
+
 async def get_todays_entries(page: Page, target_date: date) -> list[dict]:
     assignment_url = urljoin(page.url, ASSIGNMENT_PATH)
     await page.goto(assignment_url, wait_until="networkidle")
@@ -106,6 +126,105 @@ async def get_todays_entries(page: Page, target_date: date) -> list[dict]:
             }
         )
     return entries
+
+
+async def get_todays_circulars(page: Page, target_date: date) -> list[dict]:
+    circular_url = urljoin(page.url, CIRCULAR_PATH)
+    await page.goto(circular_url, wait_until="networkidle")
+    await page.wait_for_selector("#gridCircular .e-gridcontent", timeout=20000)
+
+    # The grid's data load can be slow (observed ~15s+ in practice, sometimes
+    # showing "No records to display" before the real rows arrive) - Playwright
+    # keeps polling for ".e-row" to attach for the whole timeout window, so a
+    # generously long timeout here is what makes this patient rather than any
+    # extra retry loop.
+    try:
+        await page.wait_for_selector("#gridCircular .e-gridcontent .e-row", timeout=60000)
+    except PlaywrightTimeoutError:
+        return []
+
+    rows = page.locator("#gridCircular .e-gridcontent .e-row")
+    count = await rows.count()
+
+    circulars = []
+    for i in range(count):
+        row = rows.nth(i)
+        cells = row.locator(".e-rowcell")
+        circular_date_text = await cells.nth(CIRCULAR_CELL_INDEX["circular_date"]).inner_text()
+        if _parse_circular_date(circular_date_text) != target_date:
+            continue
+        circulars.append(
+            {
+                "row_index": i,
+                "title": (await cells.nth(CIRCULAR_CELL_INDEX["title"]).inner_text()).strip(),
+                "circular_date": circular_date_text.strip(),
+                "due_date": (await cells.nth(CIRCULAR_CELL_INDEX["due_date"]).inner_text()).strip(),
+                "type_name": (await cells.nth(CIRCULAR_CELL_INDEX["type"]).inner_text()).strip(),
+            }
+        )
+    return circulars
+
+
+async def capture_circular_details(context: BrowserContext, page: Page, row_index: int) -> dict:
+    rows = page.locator("#gridCircular .e-gridcontent .e-row")
+    row = rows.nth(row_index)
+    eye_icon = row.locator(".timetable-blk3")
+
+    # viewClick() (bound to the eye icon) mirrors modalOpen() on the Assignment
+    # page: it populates the in-page ".timetable-details" panel rather than
+    # opening a real popup. The user observed this panel can take ~15s to
+    # render, hence the generous timeout below.
+    await eye_icon.click()
+    await page.wait_for_selector(".timetable-details", state="visible", timeout=30000)
+
+    description = (await page.locator("#circularDescription").inner_text()).strip()
+
+    pdf_bytes = None
+    thumb = page.locator("#caresoul img").first
+    if await thumb.count() > 0:
+        # Not every circular has an attachment - by analogy with imageClick()
+        # on the Assignment page, assume the thumbnail click triggers an AJAX
+        # call whose response URL contains "base64" and whose JSON body holds
+        # the real signed S3 URL in "classDetails". If no such response shows
+        # up, treat it the same as "no attachment" rather than failing.
+        try:
+            async with page.expect_response(
+                lambda r: "base64" in r.url.lower(), timeout=15000
+            ) as response_info:
+                await thumb.click()
+            api_response = await response_info.value
+            body_text = await api_response.text()
+        except PlaywrightTimeoutError:
+            body_text = None
+            log.warning("capture_circular_details: no attachment API response observed for row %d", row_index)
+
+        if body_text:
+            try:
+                data = json.loads(body_text)
+            except ValueError:
+                data = None
+                log.warning("capture_circular_details: attachment API response for row %d was not JSON", row_index)
+
+            pdf_url = data.get("classDetails") if isinstance(data, dict) else None
+            if isinstance(pdf_url, str) and pdf_url.startswith(("http://", "https://")):
+                response = await context.request.get(pdf_url)
+                if response.ok:
+                    pdf_bytes = await response.body()
+                else:
+                    log.warning(
+                        "capture_circular_details: fetching PDF URL failed for row %d: status=%d",
+                        row_index,
+                        response.status,
+                    )
+            elif data is not None:
+                log.warning(
+                    "capture_circular_details: classDetails was not a usable URL for row %d - keys: %s",
+                    row_index,
+                    list(data.keys()) if isinstance(data, dict) else type(data),
+                )
+
+    await page.click("#timeTableDetailsClose")
+    return {"description": description, "pdf_bytes": pdf_bytes}
 
 
 async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int) -> Optional[bytes]:

@@ -1,23 +1,33 @@
 # School Daily Log Agent
 
 Logs into the Entab CampusCare10X parent portal every day, reads today's
-Daily Assignment/Log entries, downloads and categorizes each PDF using
-Claude or Gemini, and sends a summary to Telegram.
+Daily Assignment/Log entries and Circulars, downloads and categorizes each
+PDF using Claude or Gemini, and sends the results to Telegram as two separate
+messages.
 
 ## How it works
 
 1. `daily_log_agent/portal.py` drives a headless Chromium browser (Playwright)
    to log in at `SCHOOL_BASE_URL`, accepting the Privacy Policy/DPDP checkbox
-   automatically, and navigates to `/ParentPortal/ParentAssignment`.
-2. It reads the assignment grid, keeping only rows whose Assignment Date is
-   today (Asia/Kolkata), then clicks each row's "View" icon and captures the
-   resulting PDF from the popup window.
-3. `pdf_text.py` extracts text from each PDF; `categorize.py` sends that text
+   automatically.
+2. **Daily Log**: it navigates to `/ParentPortal/ParentAssignment`, reads the
+   assignment grid, keeping only rows whose Assignment Date is today
+   (Asia/Kolkata), then clicks each row's "View" icon and captures the
+   resulting PDF.
+3. **Circulars**: it navigates to `/ParentPortal/ParentCircular`, waits
+   (patiently - this grid can take a while to populate) for rows whose
+   Circular Date is today, then clicks each row's eye icon to read the
+   circular's description text and, if present, its PDF attachment.
+4. `pdf_text.py` extracts text from each PDF; `categorize.py` sends that text
    to an AI provider (Claude via Anthropic, or Gemini via Google - selected by
-   the `AI_PROVIDER` setting) to produce a per-subject summary with bolded
-   Homework and Exam/Test Intimation sections.
-4. `telegram.py` sends the compiled summary to a Telegram chat.
-5. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
+   the `AI_PROVIDER` setting) to produce a per-subject Daily Log summary with
+   bolded Homework and Exam/Test Intimation sections, and a short Circular
+   summary that calls out any action required from the parent in bold.
+5. `telegram.py` sends the Daily Log summary and the Circulars summary as two
+   separate Telegram messages. When `CIRCULAR_DELIVERY_MODE=raw`, circulars
+   skip AI summarization (their portal text is sent as-is) and any PDF
+   attachment is sent as a Telegram document instead of being summarized.
+6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
    `schedule:` trigger, which is "best effort" and can be delayed
@@ -55,6 +65,9 @@ In this repo's Settings → Secrets and variables → Actions:
   switch that picks which AI provider categorizes the log
 - `ANTHROPIC_MODEL` / `GEMINI_MODEL` — optional, override the default model
   for whichever provider you're using
+- `CIRCULAR_DELIVERY_MODE` — optional, `summary` (default, AI-summarized) or
+  `raw` (the circular's own text as-is, plus its PDF sent as a Telegram
+  document if it has one)
 
 ### 4. Test manually before setting up the daily trigger
 Use the **Actions** tab → "Daily School Log Notification" → **Run workflow**
@@ -136,6 +149,14 @@ python -m daily_log_agent.main
   `...Base64`). If Entab changes this client-side flow, `capture_pdf_bytes()`
   in `daily_log_agent/portal.py` is the place to adjust - the function is
   built to intercept that network response rather than any popup.
+- **The Circular PDF-capture flow (`capture_circular_details()`) mirrors the
+  Daily Log flow by analogy** (same `classDetails`-in-a-`...Base64...`-named
+  response pattern) but hasn't been confirmed against a live circular that
+  actually has a PDF attached. If circular PDFs stop being picked up, check
+  the network requests fired when clicking a circular's thumbnail in
+  `#caresoul` and adjust the response matcher in that function. A circular
+  with no attachment at all is expected and handled normally (its
+  description text is still sent).
 - Any unhandled failure (login error, portal change, etc.) sends a
   `⚠️ School Daily Log Agent failed: ...` Telegram message instead of failing
   silently, so a broken run is never invisible.

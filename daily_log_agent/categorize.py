@@ -41,6 +41,37 @@ Notes:
   confidently, say so plainly in place of the structure above instead of guessing.
 """
 
+CIRCULAR_PROMPT_TEMPLATE = """You are preparing a Telegram-ready summary of a school Circular for a parent.
+
+Circular metadata:
+- Title: {title}
+- Type: {type_name}
+- Circular date: {circular_date}
+- Due date: {due_date}
+
+Circular message text (from the portal page itself, not a PDF):
+---
+{description}
+---
+
+Text extracted from the attached PDF, if any:
+---
+{pdf_text}
+---
+
+Produce a short, plain-language summary (2-5 sentences) of what the circular
+is about, using only Telegram HTML formatting (<b>...</b> for bold - no
+markdown, no other HTML tags).
+
+- If the circular requires an action from the parent (e.g. sign and return a
+  form, pay a fee, register for an event) or states a deadline, add one bold
+  sentence: <b>Action required: ...</b> stating what to do and the due date.
+  Omit this sentence entirely if nothing is required from the parent.
+- Do not invent information that isn't in the text above.
+- If both the circular message and the PDF text are empty or too sparse to
+  summarize confidently, say so plainly instead of guessing.
+"""
+
 
 def _build_prompt(entry: dict, pdf_text: str) -> str:
     return PROMPT_TEMPLATE.format(
@@ -52,15 +83,44 @@ def _build_prompt(entry: dict, pdf_text: str) -> str:
     )
 
 
-def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:
+def _build_circular_prompt(entry: dict, description: str, pdf_text: str) -> str:
+    return CIRCULAR_PROMPT_TEMPLATE.format(
+        title=entry["title"],
+        type_name=entry["type_name"],
+        circular_date=entry["circular_date"],
+        due_date=entry["due_date"],
+        description=description[:4000] or "(no description text on the portal)",
+        pdf_text=pdf_text[:8000] or "(no PDF attachment for this circular)",
+    )
+
+
+def _call_anthropic(client, model: str, prompt: str, max_tokens: int = 800) -> str:
     response = client.messages.create(
         model=model,
-        max_tokens=800,
-        messages=[{"role": "user", "content": _build_prompt(entry, pdf_text)}],
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
     )
-    return {"summary": response.content[0].text.strip()}
+    return response.content[0].text.strip()
+
+
+def _call_gemini(client, model: str, prompt: str) -> str:
+    response = client.models.generate_content(model=model, contents=prompt)
+    return response.text.strip()
+
+
+def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:
+    return {"summary": _call_anthropic(client, model, _build_prompt(entry, pdf_text))}
 
 
 def categorize_with_gemini(client, model: str, entry: dict, pdf_text: str) -> dict:
-    response = client.models.generate_content(model=model, contents=_build_prompt(entry, pdf_text))
-    return {"summary": response.text.strip()}
+    return {"summary": _call_gemini(client, model, _build_prompt(entry, pdf_text))}
+
+
+def summarize_circular_with_anthropic(client, model: str, entry: dict, description: str, pdf_text: str) -> dict:
+    prompt = _build_circular_prompt(entry, description, pdf_text)
+    return {"summary": _call_anthropic(client, model, prompt, max_tokens=400)}
+
+
+def summarize_circular_with_gemini(client, model: str, entry: dict, description: str, pdf_text: str) -> dict:
+    prompt = _build_circular_prompt(entry, description, pdf_text)
+    return {"summary": _call_gemini(client, model, prompt)}
