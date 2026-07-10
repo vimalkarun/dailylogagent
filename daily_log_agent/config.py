@@ -4,6 +4,11 @@ from typing import Optional
 
 VALID_PROVIDERS = ("anthropic", "gemini")
 VALID_CIRCULAR_DELIVERY_MODES = ("summary", "raw")
+VALID_NOTIFICATION_CHANNELS = ("telegram", "whatsapp")
+
+# Twilio's public, shared WhatsApp Sandbox number - the default "from" until
+# a real Twilio WhatsApp Sender is configured.
+DEFAULT_TWILIO_WHATSAPP_FROM = "+14155238886"
 
 
 @dataclass
@@ -11,8 +16,13 @@ class Config:
     base_url: str
     user_id: str
     password: str
-    telegram_bot_token: str
-    telegram_chat_id: str
+    notification_channel: str
+    telegram_bot_token: Optional[str]
+    telegram_chat_id: Optional[str]
+    twilio_account_sid: Optional[str]
+    twilio_auth_token: Optional[str]
+    twilio_whatsapp_from: str
+    whatsapp_to_number: Optional[str]
     ai_provider: str
     anthropic_api_key: Optional[str]
     anthropic_model: str
@@ -40,12 +50,25 @@ def load_config() -> Config:
             f"CIRCULAR_DELIVERY_MODE must be one of {VALID_CIRCULAR_DELIVERY_MODES}, got {circular_delivery_mode!r}"
         )
 
+    notification_channel = (os.environ.get("NOTIFICATION_CHANNEL") or "telegram").strip().lower()
+    if notification_channel not in VALID_NOTIFICATION_CHANNELS:
+        raise RuntimeError(
+            f"NOTIFICATION_CHANNEL must be one of {VALID_NOTIFICATION_CHANNELS}, got {notification_channel!r}"
+        )
+    is_telegram = notification_channel == "telegram"
+    is_whatsapp = notification_channel == "whatsapp"
+
     return Config(
         base_url=os.environ.get("SCHOOL_BASE_URL") or "https://entab.online/HISSJR",
         user_id=_require("SCHOOL_USER_ID"),
         password=_require("SCHOOL_PASSWORD"),
-        telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=_require("TELEGRAM_CHAT_ID"),
+        notification_channel=notification_channel,
+        telegram_bot_token=_require("TELEGRAM_BOT_TOKEN") if is_telegram else os.environ.get("TELEGRAM_BOT_TOKEN"),
+        telegram_chat_id=_require("TELEGRAM_CHAT_ID") if is_telegram else os.environ.get("TELEGRAM_CHAT_ID"),
+        twilio_account_sid=_require("TWILIO_ACCOUNT_SID") if is_whatsapp else os.environ.get("TWILIO_ACCOUNT_SID"),
+        twilio_auth_token=_require("TWILIO_AUTH_TOKEN") if is_whatsapp else os.environ.get("TWILIO_AUTH_TOKEN"),
+        twilio_whatsapp_from=os.environ.get("TWILIO_WHATSAPP_FROM") or DEFAULT_TWILIO_WHATSAPP_FROM,
+        whatsapp_to_number=_require("WHATSAPP_TO_NUMBER") if is_whatsapp else os.environ.get("WHATSAPP_TO_NUMBER"),
         ai_provider=ai_provider,
         anthropic_api_key=_require("ANTHROPIC_API_KEY") if ai_provider == "anthropic" else os.environ.get("ANTHROPIC_API_KEY"),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001",
