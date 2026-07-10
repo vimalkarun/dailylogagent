@@ -52,8 +52,13 @@ jobs:
           SCHOOL_BASE_URL: ${{ vars.SCHOOL_BASE_URL }}
           SCHOOL_USER_ID: ${{ secrets.SCHOOL_USER_ID }}
           SCHOOL_PASSWORD: ${{ secrets.SCHOOL_PASSWORD }}
+          NOTIFICATION_CHANNEL: ${{ vars.NOTIFICATION_CHANNEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM: ${{ vars.TWILIO_WHATSAPP_FROM }}
+          WHATSAPP_TO_NUMBER: ${{ secrets.WHATSAPP_TO_NUMBER }}
           AI_PROVIDER: ${{ vars.AI_PROVIDER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}

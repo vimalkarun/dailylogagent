@@ -203,6 +203,7 @@ async def capture_circular_details(context: BrowserContext, page: Page, row_inde
     description = (await page.locator("#circularDescription").inner_text()).strip()
 
     pdf_bytes = None
+    pdf_url = None
     thumb = page.locator("#caresoul img").first
     if await thumb.count() > 0:
         # Not every circular has an attachment - by analogy with imageClick()
@@ -234,20 +235,23 @@ async def capture_circular_details(context: BrowserContext, page: Page, row_inde
                 if response.ok:
                     pdf_bytes = await response.body()
                 else:
+                    pdf_url = None
                     log.warning(
                         "capture_circular_details: fetching PDF URL failed for row %d: status=%d",
                         row_index,
                         response.status,
                     )
-            elif data is not None:
-                log.warning(
-                    "capture_circular_details: classDetails was not a usable URL for row %d - keys: %s",
-                    row_index,
-                    list(data.keys()) if isinstance(data, dict) else type(data),
-                )
+            else:
+                pdf_url = None
+                if data is not None:
+                    log.warning(
+                        "capture_circular_details: classDetails was not a usable URL for row %d - keys: %s",
+                        row_index,
+                        list(data.keys()) if isinstance(data, dict) else type(data),
+                    )
 
     await page.click("#timeTableDetailsClose")
-    return {"description": description, "pdf_bytes": pdf_bytes}
+    return {"description": description, "pdf_bytes": pdf_bytes, "pdf_url": pdf_url}
 
 
 async def capture_pdf_bytes(context: BrowserContext, page: Page, row_index: int) -> Optional[bytes]:

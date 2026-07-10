@@ -12,9 +12,9 @@ from .categorize import (
     summarize_circular_with_gemini,
 )
 from .config import Config, load_config
+from . import notify
 from .pdf_text import extract_text
 from .portal import capture_circular_details, capture_pdf_bytes, get_todays_circulars, get_todays_entries, login
-from .telegram import send_document, send_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("daily_log_agent")
@@ -83,7 +83,7 @@ async def run() -> None:
 
     results = []
     circular_results = []
-    circular_documents = []  # (title, pdf_bytes) pairs to send via sendDocument in "raw" mode
+    circular_documents = []  # (title, pdf_bytes, pdf_url) to send as documents in "raw" mode
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(accept_downloads=True)
@@ -118,10 +118,12 @@ async def run() -> None:
 
             for circular in circulars:
                 pdf_bytes = None
+                pdf_url = None
                 try:
                     details = await capture_circular_details(context, page, circular["row_index"])
                     description = details["description"]
                     pdf_bytes = details["pdf_bytes"]
+                    pdf_url = details["pdf_url"]
                     pdf_text = extract_text(pdf_bytes) if pdf_bytes else ""
                     log.info(
                         "Circular %r: description %d chars, attachment %s bytes, extracted %d chars",
@@ -140,21 +142,21 @@ async def run() -> None:
                     body = "Could not read this circular automatically - please check the portal directly."
                 circular_results.append({**circular, "body": body})
                 if config.circular_delivery_mode == "raw" and pdf_bytes:
-                    circular_documents.append((circular["title"], pdf_bytes))
+                    circular_documents.append((circular["title"], pdf_bytes, pdf_url))
         finally:
             await browser.close()
 
     message = compose_message(target_date, results)
-    send_message(config.telegram_bot_token, config.telegram_chat_id, message)
-    log.info("Sent Telegram notification with %d entries", len(results))
+    notify.send_text(config, message)
+    log.info("Sent %s notification with %d entries", config.notification_channel, len(results))
 
     circular_message = compose_circular_message(target_date, circular_results)
-    send_message(config.telegram_bot_token, config.telegram_chat_id, circular_message)
-    log.info("Sent Telegram circular notification with %d entries", len(circular_results))
+    notify.send_text(config, circular_message)
+    log.info("Sent %s circular notification with %d entries", config.notification_channel, len(circular_results))
 
-    for title, pdf_bytes in circular_documents:
+    for title, pdf_bytes, pdf_url in circular_documents:
         filename = f"{(title.strip() or 'circular')[:60]}.pdf"
-        send_document(config.telegram_bot_token, config.telegram_chat_id, filename, pdf_bytes, caption=f"<b>{title}</b>")
+        notify.send_document(config, filename, pdf_bytes, pdf_url, caption=f"<b>{title}</b>")
     if circular_documents:
         log.info("Sent %d circular PDF attachment(s)", len(circular_documents))
 
@@ -166,13 +168,9 @@ def main() -> None:
         log.exception("Daily log agent failed")
         try:
             config = load_config()
-            send_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                f"⚠️ School Daily Log Agent failed: {exc}",
-            )
+            notify.send_text(config, f"⚠️ School Daily Log Agent failed: {exc}")
         except Exception:
-            log.exception("Additionally failed to send failure alert to Telegram")
+            log.exception("Additionally failed to send failure alert")
         raise
 
 

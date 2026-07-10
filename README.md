@@ -2,8 +2,8 @@
 
 Logs into the Entab CampusCare10X parent portal every day, reads today's
 Daily Assignment/Log entries and Circulars, downloads and categorizes each
-PDF using Claude or Gemini, and sends the results to Telegram as two separate
-messages.
+PDF using Claude or Gemini, and sends the results as two separate messages
+via Telegram or WhatsApp (your choice).
 
 ## How it works
 
@@ -23,10 +23,12 @@ messages.
    the `AI_PROVIDER` setting) to produce a per-subject Daily Log summary with
    bolded Homework and Exam/Test Intimation sections, and a short Circular
    summary that calls out any action required from the parent in bold.
-5. `telegram.py` sends the Daily Log summary and the Circulars summary as two
-   separate Telegram messages. When `CIRCULAR_DELIVERY_MODE=raw`, circulars
-   skip AI summarization (their portal text is sent as-is) and any PDF
-   attachment is sent as a Telegram document instead of being summarized.
+5. `notify.py` sends the Daily Log summary and the Circulars summary as two
+   separate messages via whichever channel `NOTIFICATION_CHANNEL` selects -
+   `telegram.py` (Telegram Bot API) or `whatsapp.py` (Twilio's WhatsApp API).
+   When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI summarization (their
+   portal text is sent as-is) and any PDF attachment is sent as a document
+   instead of being summarized.
 6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
@@ -35,12 +37,42 @@ messages.
 
 ## One-time setup
 
-### 1. Telegram bot
+### 1. Notification channel: Telegram or WhatsApp
+Pick one via `NOTIFICATION_CHANNEL` (`telegram` is the default).
+
+**Telegram** (simpler - free, no approval needed):
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`,
    and copy the bot token it gives you.
 2. Send any message to your new bot (or add it to a group).
 3. Visit `https://api.telegram.org/bot<token>/getUpdates` in a browser and
    find `"chat":{"id": ...}` — that number is your `TELEGRAM_CHAT_ID`.
+
+**WhatsApp** (via Twilio's WhatsApp Sandbox - free, works within minutes, but
+Twilio positions the sandbox as for testing/development rather than a
+guaranteed-indefinite production channel; see below for upgrading later):
+1. Create a free account at [twilio.com](https://www.twilio.com) and open the
+   [Console](https://console.twilio.com) - your **Account SID** and
+   **Auth Token** are on the dashboard. These are `TWILIO_ACCOUNT_SID` /
+   `TWILIO_AUTH_TOKEN`.
+2. In the Console, go to **Messaging → Try it out → Send a WhatsApp message**
+   to find your sandbox's join code (e.g. `join some-word`).
+3. From each WhatsApp number you want to receive notifications on, send that
+   `join <code>` message to the sandbox number shown there
+   (**+1 415 523 8886** by default). This opt-in is **per number** - every
+   recipient has to send the join code themselves, and it can expire after a
+   few days of inactivity, in which case just re-send it.
+4. Set `WHATSAPP_TO_NUMBER` to your WhatsApp number in E.164 format (e.g.
+   `+919876543210`), or a comma-separated list to notify multiple numbers
+   (e.g. `+919876543210,+919876500000` - each still needs its own join code
+   per the point above). Leave `TWILIO_WHATSAPP_FROM` unset - it defaults to
+   the shared sandbox number above.
+5. **Formatting note**: WhatsApp doesn't support Telegram's HTML - `whatsapp.py`
+   automatically converts `<b>...</b>` to WhatsApp's `*bold*` markdown before
+   sending, and strips any other tags.
+6. **Upgrading later**: if you outgrow the sandbox, apply for a real Twilio
+   WhatsApp Sender (Console → Messaging → Senders), which requires WhatsApp
+   Business/Meta approval and a submitted message template (can take a few
+   days) - then set `TWILIO_WHATSAPP_FROM` to that number.
 
 ### 2. AI provider API key
 Pick one (both can be configured; only the selected one needs a real key):
@@ -53,25 +85,28 @@ In this repo's Settings → Secrets and variables → Actions:
 **Secrets** (Secrets tab):
 - `SCHOOL_USER_ID`
 - `SCHOOL_PASSWORD`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (if using Telegram)
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `WHATSAPP_TO_NUMBER` (if using WhatsApp)
 - `ANTHROPIC_API_KEY` (if using Anthropic)
 - `GEMINI_API_KEY` (if using Gemini)
 
 **Variables** (Variables tab — not secrets, since none of these are sensitive):
 - `SCHOOL_BASE_URL` — optional, only if your school's portal URL differs from
   the default (`https://entab.online/HISSJR`)
+- `NOTIFICATION_CHANNEL` — optional, `telegram` (default) or `whatsapp`
+- `TWILIO_WHATSAPP_FROM` — optional, only needed once you move off the shared
+  Twilio sandbox number to your own WhatsApp Sender
 - `AI_PROVIDER` — optional, `anthropic` (default) or `gemini`; this is the
   switch that picks which AI provider categorizes the log
 - `ANTHROPIC_MODEL` / `GEMINI_MODEL` — optional, override the default model
   for whichever provider you're using
 - `CIRCULAR_DELIVERY_MODE` — optional, `summary` (default, AI-summarized) or
-  `raw` (the circular's own text as-is, plus its PDF sent as a Telegram
-  document if it has one)
+  `raw` (the circular's own text as-is, plus its PDF sent as a document if it
+  has one)
 
 ### 4. Test manually before setting up the daily trigger
 Use the **Actions** tab → "Daily School Log Notification" → **Run workflow**
-and confirm you get a Telegram message.
+and confirm you get a message on your chosen channel.
 
 If there's no log entry for today (e.g. while testing on a weekend), tick
 **test_run** in the "Run workflow" form and point it at a different date, in
@@ -149,14 +184,28 @@ python -m daily_log_agent.main
   `...Base64`). If Entab changes this client-side flow, `capture_pdf_bytes()`
   in `daily_log_agent/portal.py` is the place to adjust - the function is
   built to intercept that network response rather than any popup.
-- **The Circular PDF-capture flow (`capture_circular_details()`) mirrors the
-  Daily Log flow by analogy** (same `classDetails`-in-a-`...Base64...`-named
-  response pattern) but hasn't been confirmed against a live circular that
-  actually has a PDF attached. If circular PDFs stop being picked up, check
-  the network requests fired when clicking a circular's thumbnail in
-  `#caresoul` and adjust the response matcher in that function. A circular
-  with no attachment at all is expected and handled normally (its
+- **The Circular PDF-capture flow (`capture_circular_details()`) is confirmed
+  against a live run** with a real attachment (same `classDetails`-in-a-
+  `...Base64...`-named response pattern as the Daily Log flow). It also
+  waits for the description panel's content to actually populate, not just
+  become visible - live testing showed the panel can render empty for a few
+  seconds before Entab's JS fills it in. If circular PDFs stop being picked
+  up, check the network requests fired when clicking a circular's thumbnail
+  in `#caresoul` and adjust the response matcher in that function. A
+  circular with no attachment at all is expected and handled normally (its
   description text is still sent).
+- **WhatsApp raw-mode PDF delivery reuses Entab's original signed S3 URL**
+  (passed straight to Twilio's `MediaUrl`) rather than re-uploading the file,
+  since that URL is normally still valid (~13 minute expiry) by the time the
+  message sends. This path hasn't been live-tested end-to-end; if it stops
+  working, re-check whether the signed URL is still valid by the time Twilio
+  fetches it.
+- **`WHATSAPP_TO_NUMBER` supports multiple recipients (comma-separated) but
+  not a WhatsApp Group** - the WhatsApp Business Platform (Twilio's and
+  Meta's own) has no API for posting into a Group at all, only 1:1
+  business-to-recipient messaging. Multiple numbers just means the agent
+  sends one message per number, each billed as its own conversation once
+  past the sandbox.
 - Any unhandled failure (login error, portal change, etc.) sends a
-  `⚠️ School Daily Log Agent failed: ...` Telegram message instead of failing
-  silently, so a broken run is never invisible.
+  `⚠️ School Daily Log Agent failed: ...` message on your configured channel
+  instead of failing silently, so a broken run is never invisible.
