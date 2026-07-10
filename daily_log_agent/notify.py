@@ -10,7 +10,7 @@ def send_text(config: Config, text: str) -> None:
             config.twilio_account_sid,
             config.twilio_auth_token,
             config.twilio_whatsapp_from,
-            config.whatsapp_to_number,
+            config.whatsapp_to_numbers,
             text,
         )
     else:
@@ -25,7 +25,7 @@ def send_document(
             config.twilio_account_sid,
             config.twilio_auth_token,
             config.twilio_whatsapp_from,
-            config.whatsapp_to_number,
+            config.whatsapp_to_numbers,
             pdf_url,
             caption,
         )

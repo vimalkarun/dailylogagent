@@ -56,14 +56,16 @@ guaranteed-indefinite production channel; see below for upgrading later):
    `TWILIO_AUTH_TOKEN`.
 2. In the Console, go to **Messaging → Try it out → Send a WhatsApp message**
    to find your sandbox's join code (e.g. `join some-word`).
-3. From the WhatsApp number you want to receive notifications on, send that
+3. From each WhatsApp number you want to receive notifications on, send that
    `join <code>` message to the sandbox number shown there
-   (**+1 415 523 8886** by default). You only need to do this once - though
-   Twilio sandbox sessions can expire after a few days of inactivity, in
-   which case just re-send the join message.
+   (**+1 415 523 8886** by default). This opt-in is **per number** - every
+   recipient has to send the join code themselves, and it can expire after a
+   few days of inactivity, in which case just re-send it.
 4. Set `WHATSAPP_TO_NUMBER` to your WhatsApp number in E.164 format (e.g.
-   `+919876543210`). Leave `TWILIO_WHATSAPP_FROM` unset - it defaults to the
-   shared sandbox number above.
+   `+919876543210`), or a comma-separated list to notify multiple numbers
+   (e.g. `+919876543210,+919876500000` - each still needs its own join code
+   per the point above). Leave `TWILIO_WHATSAPP_FROM` unset - it defaults to
+   the shared sandbox number above.
 5. **Formatting note**: WhatsApp doesn't support Telegram's HTML - `whatsapp.py`
    automatically converts `<b>...</b>` to WhatsApp's `*bold*` markdown before
    sending, and strips any other tags.
@@ -198,6 +200,12 @@ python -m daily_log_agent.main
   message sends. This path hasn't been live-tested end-to-end; if it stops
   working, re-check whether the signed URL is still valid by the time Twilio
   fetches it.
+- **`WHATSAPP_TO_NUMBER` supports multiple recipients (comma-separated) but
+  not a WhatsApp Group** - the WhatsApp Business Platform (Twilio's and
+  Meta's own) has no API for posting into a Group at all, only 1:1
+  business-to-recipient messaging. Multiple numbers just means the agent
+  sends one message per number, each billed as its own conversation once
+  past the sandbox.
 - Any unhandled failure (login error, portal change, etc.) sends a
   `⚠️ School Daily Log Agent failed: ...` message on your configured channel
   instead of failing silently, so a broken run is never invisible.

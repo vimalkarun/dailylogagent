@@ -22,7 +22,7 @@ class Config:
     twilio_account_sid: Optional[str]
     twilio_auth_token: Optional[str]
     twilio_whatsapp_from: str
-    whatsapp_to_number: Optional[str]
+    whatsapp_to_numbers: list[str]
     ai_provider: str
     anthropic_api_key: Optional[str]
     anthropic_model: str
@@ -37,6 +37,10 @@ def _require(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _parse_number_list(raw: str) -> list[str]:
+    return [n.strip() for n in raw.split(",") if n.strip()]
 
 
 def load_config() -> Config:
@@ -58,6 +62,10 @@ def load_config() -> Config:
     is_telegram = notification_channel == "telegram"
     is_whatsapp = notification_channel == "whatsapp"
 
+    whatsapp_to_numbers = _parse_number_list(os.environ.get("WHATSAPP_TO_NUMBER") or "")
+    if is_whatsapp and not whatsapp_to_numbers:
+        raise RuntimeError("Missing required environment variable: WHATSAPP_TO_NUMBER")
+
     return Config(
         base_url=os.environ.get("SCHOOL_BASE_URL") or "https://entab.online/HISSJR",
         user_id=_require("SCHOOL_USER_ID"),
@@ -68,7 +76,7 @@ def load_config() -> Config:
         twilio_account_sid=_require("TWILIO_ACCOUNT_SID") if is_whatsapp else os.environ.get("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=_require("TWILIO_AUTH_TOKEN") if is_whatsapp else os.environ.get("TWILIO_AUTH_TOKEN"),
         twilio_whatsapp_from=os.environ.get("TWILIO_WHATSAPP_FROM") or DEFAULT_TWILIO_WHATSAPP_FROM,
-        whatsapp_to_number=_require("WHATSAPP_TO_NUMBER") if is_whatsapp else os.environ.get("WHATSAPP_TO_NUMBER"),
+        whatsapp_to_numbers=whatsapp_to_numbers,
         ai_provider=ai_provider,
         anthropic_api_key=_require("ANTHROPIC_API_KEY") if ai_provider == "anthropic" else os.environ.get("ANTHROPIC_API_KEY"),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001",
