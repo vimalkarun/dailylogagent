@@ -47,9 +47,9 @@ Pick one via `NOTIFICATION_CHANNEL` (`telegram` is the default).
 3. Visit `https://api.telegram.org/bot<token>/getUpdates` in a browser and
    find `"chat":{"id": ...}` — that number is your `TELEGRAM_CHAT_ID`.
 
-**WhatsApp** (via Twilio's WhatsApp Sandbox - free, works within minutes, but
-Twilio positions the sandbox as for testing/development rather than a
-guaranteed-indefinite production channel; see below for upgrading later):
+**WhatsApp** (via Twilio's WhatsApp Sandbox - free, works within minutes for
+the initial connection; see step 4 below for why a Message Template is
+required for the actual daily sends):
 1. Create a free account at [twilio.com](https://www.twilio.com) and open the
    [Console](https://console.twilio.com) - your **Account SID** and
    **Auth Token** are on the dashboard. These are `TWILIO_ACCOUNT_SID` /
@@ -59,20 +59,39 @@ guaranteed-indefinite production channel; see below for upgrading later):
 3. From each WhatsApp number you want to receive notifications on, send that
    `join <code>` message to the sandbox number shown there
    (**+1 415 523 8886** by default). This opt-in is **per number** - every
-   recipient has to send the join code themselves, and it can expire after a
-   few days of inactivity, in which case just re-send it.
-4. Set `WHATSAPP_TO_NUMBER` to your WhatsApp number in E.164 format (e.g.
+   recipient has to send the join code themselves.
+4. **Create and approve a WhatsApp Message Template.** This is not optional:
+   WhatsApp only allows a business to freely message a recipient (a "freeform"
+   message) within a 24-hour window that opens when *they* message you -
+   it does not stay open just because the bot sends daily messages. Once that
+   window lapses (e.g. over a weekend with no incoming message), a freeform
+   send is silently rejected by WhatsApp - Twilio still returns success
+   (`201 Created`, since it accepted the message for delivery), and the
+   rejection (error 63016) only shows up in Twilio's own Message Logs, not in
+   this app's own logs. A Message Template is exempt from that window, which
+   is what makes unattended daily sends reliable:
+   - In the Console, go to **Messaging → Content Template Builder → Create new**.
+   - Choose a **Text** template. Category: **Utility** (this is a personal
+     account notification, not marketing - Utility templates are typically
+     approved within a few hours).
+   - Body: `📚 {{1}}` with a realistic sample value for `{{1}}` (e.g. paste in
+     a sample daily log summary) - Meta's review wants to see what the
+     variable will actually contain.
+   - Save, then **Submit for WhatsApp Approval**. Once approved, copy its
+     **Content SID** (starts with `HX...`) - that's `TWILIO_WHATSAPP_TEMPLATE_SID`.
+5. Set `WHATSAPP_TO_NUMBER` to your WhatsApp number in E.164 format (e.g.
    `+919876543210`), or a comma-separated list to notify multiple numbers
    (e.g. `+919876543210,+919876500000` - each still needs its own join code
-   per the point above). Leave `TWILIO_WHATSAPP_FROM` unset - it defaults to
-   the shared sandbox number above.
-5. **Formatting note**: WhatsApp doesn't support Telegram's HTML - `whatsapp.py`
+   per step 3). Leave `TWILIO_WHATSAPP_FROM` unset - it defaults to the
+   shared sandbox number above.
+6. **Formatting note**: WhatsApp doesn't support Telegram's HTML - `whatsapp.py`
    automatically converts `<b>...</b>` to WhatsApp's `*bold*` markdown before
-   sending, and strips any other tags.
-6. **Upgrading later**: if you outgrow the sandbox, apply for a real Twilio
-   WhatsApp Sender (Console → Messaging → Senders), which requires WhatsApp
-   Business/Meta approval and a submitted message template (can take a few
-   days) - then set `TWILIO_WHATSAPP_FROM` to that number.
+   sending, and strips any other tags. This still applies inside the
+   template's `{{1}}` variable.
+7. **Upgrading later**: if you outgrow the sandbox, apply for a real Twilio
+   WhatsApp Sender (Console → Messaging → Senders), which requires its own
+   WhatsApp Business/Meta approval - your existing template can typically be
+   reused - then set `TWILIO_WHATSAPP_FROM` to that number.
 
 ### 2. AI provider API key
 Pick one (both can be configured; only the selected one needs a real key):
@@ -96,6 +115,8 @@ In this repo's Settings → Secrets and variables → Actions:
 - `NOTIFICATION_CHANNEL` — optional, `telegram` (default) or `whatsapp`
 - `TWILIO_WHATSAPP_FROM` — optional, only needed once you move off the shared
   Twilio sandbox number to your own WhatsApp Sender
+- `TWILIO_WHATSAPP_TEMPLATE_SID` — required if using WhatsApp; the Content SID
+  (`HX...`) of your approved Message Template
 - `AI_PROVIDER` — optional, `anthropic` (default) or `gemini`; this is the
   switch that picks which AI provider categorizes the log
 - `ANTHROPIC_MODEL` / `GEMINI_MODEL` — optional, override the default model
@@ -200,6 +221,21 @@ python -m daily_log_agent.main
   message sends. This path hasn't been live-tested end-to-end; if it stops
   working, re-check whether the signed URL is still valid by the time Twilio
   fetches it.
+- **WhatsApp document sends (`CIRCULAR_DELIVERY_MODE=raw` PDF attachments)
+  are still freeform messages, not sent via the Message Template** - Twilio
+  has no template mechanism for ad-hoc document attachments, so these remain
+  subject to the 24h session-window restriction described in setup step 4.
+  If a circular has a PDF and the window happens to be closed, the text
+  summary/description still sends (via the template) but the PDF itself may
+  silently fail - check the delivery-status log line for that message (see
+  below) if a PDF seems to be missing.
+- **WhatsApp sends are followed by a delivery-status check** (`whatsapp.py`
+  waits a few seconds, then queries Twilio for the message's actual status)
+  so a rejection like error 63016 shows up as a `WARNING` in this app's own
+  logs instead of only in Twilio's Message Logs. This is visibility only -
+  it doesn't retry or fail the run, so still check the Actions log after
+  setup changes rather than assuming a `success` run conclusion means every
+  message actually arrived.
 - **`WHATSAPP_TO_NUMBER` supports multiple recipients (comma-separated) but
   not a WhatsApp Group** - the WhatsApp Business Platform (Twilio's and
   Meta's own) has no API for posting into a Group at all, only 1:1

@@ -22,6 +22,7 @@ class Config:
     twilio_account_sid: Optional[str]
     twilio_auth_token: Optional[str]
     twilio_whatsapp_from: str
+    twilio_whatsapp_template_sid: Optional[str]
     whatsapp_to_numbers: list[str]
     ai_provider: str
     anthropic_api_key: Optional[str]
@@ -76,6 +77,9 @@ def load_config() -> Config:
         twilio_account_sid=_require("TWILIO_ACCOUNT_SID") if is_whatsapp else os.environ.get("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=_require("TWILIO_AUTH_TOKEN") if is_whatsapp else os.environ.get("TWILIO_AUTH_TOKEN"),
         twilio_whatsapp_from=os.environ.get("TWILIO_WHATSAPP_FROM") or DEFAULT_TWILIO_WHATSAPP_FROM,
+        twilio_whatsapp_template_sid=_require("TWILIO_WHATSAPP_TEMPLATE_SID")
+        if is_whatsapp
+        else os.environ.get("TWILIO_WHATSAPP_TEMPLATE_SID"),
         whatsapp_to_numbers=whatsapp_to_numbers,
         ai_provider=ai_provider,
         anthropic_api_key=_require("ANTHROPIC_API_KEY") if ai_provider == "anthropic" else os.environ.get("ANTHROPIC_API_KEY"),
