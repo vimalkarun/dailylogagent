@@ -12,7 +12,6 @@ def send_text(config: Config, text: str) -> None:
             config.twilio_whatsapp_from,
             config.whatsapp_to_numbers,
             text,
-            config.twilio_whatsapp_template_sid,
         )
     else:
         telegram.send_message(config.telegram_bot_token, config.telegram_chat_id, text)

@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 import time
@@ -65,40 +64,22 @@ def _post(account_sid: str, auth_token: str, data: dict) -> None:
         _check_delivery(account_sid, auth_token, message_sid)
 
 
-def send_message(
-    account_sid: str,
-    auth_token: str,
-    from_number: str,
-    to_numbers: List[str],
-    text: str,
-    template_sid: str,
-) -> None:
+def send_message(account_sid: str, auth_token: str, from_number: str, to_numbers: List[str], text: str) -> None:
     message = to_whatsapp_text(text)
     # WhatsApp message bodies are capped around 1600 characters via Twilio.
     chunks = [message[i : i + 1500] for i in range(0, len(message), 1500)] or [message]
     for to_number in to_numbers:
         for chunk in chunks:
-            # Sent via an approved Content Template (not a freeform Body) so
-            # delivery doesn't depend on the recipient's 24h session window
-            # being open - required for unattended proactive notifications.
             _post(
                 account_sid,
                 auth_token,
-                {
-                    "From": f"whatsapp:{from_number}",
-                    "To": f"whatsapp:{to_number}",
-                    "ContentSid": template_sid,
-                    "ContentVariables": json.dumps({"1": chunk}),
-                },
+                {"From": f"whatsapp:{from_number}", "To": f"whatsapp:{to_number}", "Body": chunk},
             )
 
 
 def send_document(
     account_sid: str, auth_token: str, from_number: str, to_numbers: List[str], pdf_url: str, caption: str = ""
 ) -> None:
-    # Still a freeform send (Twilio has no equivalent template mechanism for
-    # ad-hoc document attachments) - subject to the same 24h session-window
-    # restriction as before. See README known limitations.
     body = to_whatsapp_text(caption)[:1500] if caption else None
     for to_number in to_numbers:
         data = {"From": f"whatsapp:{from_number}", "To": f"whatsapp:{to_number}", "MediaUrl": pdf_url}
