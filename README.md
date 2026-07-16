@@ -3,7 +3,7 @@
 Logs into the Entab CampusCare10X parent portal every day, reads today's
 Daily Assignment/Log entries and Circulars, downloads and categorizes each
 PDF using Claude or Gemini, and sends the results as two separate messages
-via Telegram or WhatsApp (your choice).
+via Telegram, WhatsApp, or both (your choice).
 
 ## How it works
 
@@ -24,11 +24,14 @@ via Telegram or WhatsApp (your choice).
    bolded Homework and Exam/Test Intimation sections, and a short Circular
    summary that calls out any action required from the parent in bold.
 5. `notify.py` sends the Daily Log summary and the Circulars summary as two
-   separate messages via whichever channel `NOTIFICATION_CHANNEL` selects -
-   `telegram.py` (Telegram Bot API) or `whatsapp.py` (Twilio's WhatsApp API).
-   When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI summarization (their
-   portal text is sent as-is) and any PDF attachment is sent as a document
-   instead of being summarized.
+   separate messages via whichever channel(s) `NOTIFICATION_CHANNEL` selects -
+   `telegram.py` (Telegram Bot API), `whatsapp.py` (Twilio's WhatsApp API), or
+   both. Each entry is only summarized by the AI **once** regardless of how
+   many channels it's delivered to - `NOTIFICATION_CHANNEL=both` just sends
+   that one already-composed message out twice, it doesn't double the AI
+   token usage. When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI
+   summarization (their portal text is sent as-is) and any PDF attachment is
+   sent as a document instead of being summarized.
 6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
@@ -37,8 +40,10 @@ via Telegram or WhatsApp (your choice).
 
 ## One-time setup
 
-### 1. Notification channel: Telegram or WhatsApp
-Pick one via `NOTIFICATION_CHANNEL` (`telegram` is the default).
+### 1. Notification channel: Telegram, WhatsApp, or both
+Pick via `NOTIFICATION_CHANNEL`: `telegram` (default), `whatsapp`, or `both`.
+`both` requires setting up both sections below and configuring both sets of
+credentials - each notification just gets sent out twice, once per channel.
 
 **Telegram** (simpler - free, no approval needed):
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`,
@@ -87,15 +92,15 @@ In this repo's Settings → Secrets and variables → Actions:
 **Secrets** (Secrets tab):
 - `SCHOOL_USER_ID`
 - `SCHOOL_PASSWORD`
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (if using Telegram)
-- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `WHATSAPP_TO_NUMBER` (if using WhatsApp)
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (if using Telegram or `both`)
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `WHATSAPP_TO_NUMBER` (if using WhatsApp or `both`)
 - `ANTHROPIC_API_KEY` (if using Anthropic)
 - `GEMINI_API_KEY` (if using Gemini)
 
 **Variables** (Variables tab — not secrets, since none of these are sensitive):
 - `SCHOOL_BASE_URL` — optional, only if your school's portal URL differs from
   the default (`https://entab.online/HISSJR`)
-- `NOTIFICATION_CHANNEL` — optional, `telegram` (default) or `whatsapp`
+- `NOTIFICATION_CHANNEL` — optional, `telegram` (default), `whatsapp`, or `both`
 - `TWILIO_WHATSAPP_FROM` — optional, only needed once you move off the shared
   Twilio sandbox number to your own WhatsApp Sender
 - `AI_PROVIDER` — optional, `anthropic` (default) or `gemini`; this is the
