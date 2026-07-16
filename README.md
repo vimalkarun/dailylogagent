@@ -3,7 +3,7 @@
 Logs into the Entab CampusCare10X parent portal every day, reads today's
 Daily Assignment/Log entries and Circulars, downloads and categorizes each
 PDF using Claude or Gemini, and sends the results as two separate messages
-via Telegram or WhatsApp (your choice).
+via Telegram, WhatsApp, or both (your choice).
 
 ## How it works
 
@@ -24,11 +24,14 @@ via Telegram or WhatsApp (your choice).
    bolded Homework and Exam/Test Intimation sections, and a short Circular
    summary that calls out any action required from the parent in bold.
 5. `notify.py` sends the Daily Log summary and the Circulars summary as two
-   separate messages via whichever channel `NOTIFICATION_CHANNEL` selects -
-   `telegram.py` (Telegram Bot API) or `whatsapp.py` (Twilio's WhatsApp API).
-   When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI summarization (their
-   portal text is sent as-is) and any PDF attachment is sent as a document
-   instead of being summarized.
+   separate messages via whichever channel(s) `NOTIFICATION_CHANNEL` selects -
+   `telegram.py` (Telegram Bot API), `whatsapp.py` (Twilio's WhatsApp API), or
+   both. Each entry is only summarized by the AI **once** regardless of how
+   many channels it's delivered to - `NOTIFICATION_CHANNEL=both` just sends
+   that one already-composed message out twice, it doesn't double the AI
+   token usage. When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI
+   summarization (their portal text is sent as-is) and any PDF attachment is
+   sent as a document instead of being summarized.
 6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
@@ -37,8 +40,10 @@ via Telegram or WhatsApp (your choice).
 
 ## One-time setup
 
-### 1. Notification channel: Telegram or WhatsApp
-Pick one via `NOTIFICATION_CHANNEL` (`telegram` is the default).
+### 1. Notification channel: Telegram, WhatsApp, or both
+Pick via `NOTIFICATION_CHANNEL`: `telegram` (default), `whatsapp`, or `both`.
+`both` requires setting up both sections below and configuring both sets of
+credentials - each notification just gets sent out twice, once per channel.
 
 **Telegram** (simpler - free, no approval needed):
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`,
@@ -48,8 +53,9 @@ Pick one via `NOTIFICATION_CHANNEL` (`telegram` is the default).
    find `"chat":{"id": ...}` — that number is your `TELEGRAM_CHAT_ID`.
 
 **WhatsApp** (via Twilio's WhatsApp Sandbox - free, works within minutes, but
-Twilio positions the sandbox as for testing/development rather than a
-guaranteed-indefinite production channel; see below for upgrading later):
+see the known limitations below for a real gap in this approach: freeform
+messages can silently fail to deliver if the recipient hasn't messaged the
+sandbox recently):
 1. Create a free account at [twilio.com](https://www.twilio.com) and open the
    [Console](https://console.twilio.com) - your **Account SID** and
    **Auth Token** are on the dashboard. These are `TWILIO_ACCOUNT_SID` /
@@ -59,8 +65,9 @@ guaranteed-indefinite production channel; see below for upgrading later):
 3. From each WhatsApp number you want to receive notifications on, send that
    `join <code>` message to the sandbox number shown there
    (**+1 415 523 8886** by default). This opt-in is **per number** - every
-   recipient has to send the join code themselves, and it can expire after a
-   few days of inactivity, in which case just re-send it.
+   recipient has to send the join code themselves, and the resulting session
+   can lapse after a period of inactivity (see known limitations) - just
+   re-send the join message if notifications stop arriving.
 4. Set `WHATSAPP_TO_NUMBER` to your WhatsApp number in E.164 format (e.g.
    `+919876543210`), or a comma-separated list to notify multiple numbers
    (e.g. `+919876543210,+919876500000` - each still needs its own join code
@@ -71,8 +78,8 @@ guaranteed-indefinite production channel; see below for upgrading later):
    sending, and strips any other tags.
 6. **Upgrading later**: if you outgrow the sandbox, apply for a real Twilio
    WhatsApp Sender (Console → Messaging → Senders), which requires WhatsApp
-   Business/Meta approval and a submitted message template (can take a few
-   days) - then set `TWILIO_WHATSAPP_FROM` to that number.
+   Business/Meta approval (can take a few days) - then set
+   `TWILIO_WHATSAPP_FROM` to that number.
 
 ### 2. AI provider API key
 Pick one (both can be configured; only the selected one needs a real key):
@@ -85,15 +92,15 @@ In this repo's Settings → Secrets and variables → Actions:
 **Secrets** (Secrets tab):
 - `SCHOOL_USER_ID`
 - `SCHOOL_PASSWORD`
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (if using Telegram)
-- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `WHATSAPP_TO_NUMBER` (if using WhatsApp)
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (if using Telegram or `both`)
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `WHATSAPP_TO_NUMBER` (if using WhatsApp or `both`)
 - `ANTHROPIC_API_KEY` (if using Anthropic)
 - `GEMINI_API_KEY` (if using Gemini)
 
 **Variables** (Variables tab — not secrets, since none of these are sensitive):
 - `SCHOOL_BASE_URL` — optional, only if your school's portal URL differs from
   the default (`https://entab.online/HISSJR`)
-- `NOTIFICATION_CHANNEL` — optional, `telegram` (default) or `whatsapp`
+- `NOTIFICATION_CHANNEL` — optional, `telegram` (default), `whatsapp`, or `both`
 - `TWILIO_WHATSAPP_FROM` — optional, only needed once you move off the shared
   Twilio sandbox number to your own WhatsApp Sender
 - `AI_PROVIDER` — optional, `anthropic` (default) or `gemini`; this is the
@@ -200,6 +207,24 @@ python -m daily_log_agent.main
   message sends. This path hasn't been live-tested end-to-end; if it stops
   working, re-check whether the signed URL is still valid by the time Twilio
   fetches it.
+- **All WhatsApp sends are freeform messages, which only deliver within the
+  recipient's 24-hour session window.** WhatsApp only lets a business freely
+  message a recipient within a window that opens when *they* message first -
+  it does not stay open just because the bot sends daily notifications. Once
+  that window lapses (e.g. over a weekend with no incoming message), a send
+  is silently rejected by WhatsApp while Twilio's API still returns success
+  (`201 Created`, since it only confirms the message was queued) - the actual
+  rejection (Twilio error 63016) only shows up in Twilio's own Message Logs.
+  If notifications stop arriving, re-send the sandbox `join <code>` message
+  from the recipient's WhatsApp to reopen the window. The proper fix - an
+  approved WhatsApp Message Template, which is exempt from this window - was
+  tried and reverted; revisit that if this keeps recurring.
+- **WhatsApp sends are followed by a delivery-status check** (`whatsapp.py`
+  waits a few seconds, then queries Twilio for the message's actual status)
+  so a rejection like error 63016 shows up as a `WARNING` in this app's own
+  logs instead of only in Twilio's Message Logs. This is visibility only -
+  it doesn't retry or fail the run, so still check the Actions log rather
+  than assuming a `success` run conclusion means every message arrived.
 - **`WHATSAPP_TO_NUMBER` supports multiple recipients (comma-separated) but
   not a WhatsApp Group** - the WhatsApp Business Platform (Twilio's and
   Meta's own) has no API for posting into a Group at all, only 1:1

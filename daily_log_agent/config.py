@@ -4,7 +4,7 @@ from typing import Optional
 
 VALID_PROVIDERS = ("anthropic", "gemini")
 VALID_CIRCULAR_DELIVERY_MODES = ("summary", "raw")
-VALID_NOTIFICATION_CHANNELS = ("telegram", "whatsapp")
+VALID_NOTIFICATION_CHANNELS = ("telegram", "whatsapp", "both")
 
 # Twilio's public, shared WhatsApp Sandbox number - the default "from" until
 # a real Twilio WhatsApp Sender is configured.
@@ -59,8 +59,8 @@ def load_config() -> Config:
         raise RuntimeError(
             f"NOTIFICATION_CHANNEL must be one of {VALID_NOTIFICATION_CHANNELS}, got {notification_channel!r}"
         )
-    is_telegram = notification_channel == "telegram"
-    is_whatsapp = notification_channel == "whatsapp"
+    is_telegram = notification_channel in ("telegram", "both")
+    is_whatsapp = notification_channel in ("whatsapp", "both")
 
     whatsapp_to_numbers = _parse_number_list(os.environ.get("WHATSAPP_TO_NUMBER") or "")
     if is_whatsapp and not whatsapp_to_numbers:
