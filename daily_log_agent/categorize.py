@@ -1,3 +1,16 @@
+import logging
+import time
+
+log = logging.getLogger("daily_log_agent.categorize")
+
+# Gemini in particular has well-documented, frequently-reported 503 "model is
+# overloaded" errors (a Google-side capacity issue, not specific to any one
+# account/prompt) that typically clear up within a few seconds - retrying
+# with short backoff resolves most of them without falling through to the
+# raw-content fallback in main.py.
+_MAX_ATTEMPTS = 4
+_BACKOFF_SECONDS = (1, 2, 4)
+
 PROMPT_TEMPLATE = """You are preparing a Telegram-ready summary of a school Daily Log for a parent.
 
 Entry metadata:
@@ -94,18 +107,43 @@ def _build_circular_prompt(entry: dict, description: str, pdf_text: str) -> str:
     )
 
 
+def _with_retry(provider: str, call):
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt == _MAX_ATTEMPTS - 1:
+                raise
+            delay = _BACKOFF_SECONDS[attempt]
+            log.warning(
+                "%s call failed (attempt %d/%d): %s - retrying in %ds",
+                provider,
+                attempt + 1,
+                _MAX_ATTEMPTS,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+
+
 def _call_anthropic(client, model: str, prompt: str, max_tokens: int = 800) -> str:
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    def call():
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    return _with_retry("Anthropic", call)
 
 
 def _call_gemini(client, model: str, prompt: str) -> str:
-    response = client.models.generate_content(model=model, contents=prompt)
-    return response.text.strip()
+    def call():
+        response = client.models.generate_content(model=model, contents=prompt)
+        return response.text.strip()
+
+    return _with_retry("Gemini", call)
 
 
 def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:

@@ -22,7 +22,12 @@ via Telegram, WhatsApp, or both (your choice).
    to an AI provider (Claude via Anthropic, or Gemini via Google - selected by
    the `AI_PROVIDER` setting) to produce a per-subject Daily Log summary with
    bolded Homework and Exam/Test Intimation sections, and a short Circular
-   summary that calls out any action required from the parent in bold.
+   summary that calls out any action required from the parent in bold. Each
+   AI call retries up to 3 times (1s/2s/4s backoff) on failure before giving
+   up - Gemini 2.5 Flash in particular has well-documented, widely-reported
+   `503 "model is overloaded"` errors (a Google-side capacity issue, not
+   specific to this app or any one account) that most often clear up within
+   a few seconds.
 5. `notify.py` sends the Daily Log summary and the Circulars summary as two
    separate messages via whichever channel(s) `NOTIFICATION_CHANNEL` selects -
    `telegram.py` (Telegram Bot API), `whatsapp.py` (Twilio's WhatsApp API), or
