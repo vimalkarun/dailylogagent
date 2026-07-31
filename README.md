@@ -27,7 +27,11 @@ via Telegram, WhatsApp, or both (your choice).
    up - Gemini 2.5 Flash in particular has well-documented, widely-reported
    `503 "model is overloaded"` errors (a Google-side capacity issue, not
    specific to this app or any one account) that most often clear up within
-   a few seconds.
+   a few seconds. If the configured Gemini model still fails after those 4
+   attempts, it falls back to the lighter `gemini-2.5-flash-lite` for up to 3
+   more attempts before giving up entirely. This fallback is per-call only -
+   it's never written back to config, so the very next AI call (and every
+   future run) starts fresh with whatever `GEMINI_MODEL` is actually set to.
 5. `notify.py` sends the Daily Log summary and the Circulars summary as two
    separate messages via whichever channel(s) `NOTIFICATION_CHANNEL` selects -
    `telegram.py` (Telegram Bot API), `whatsapp.py` (Twilio's WhatsApp API), or

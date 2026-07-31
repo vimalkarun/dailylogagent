@@ -11,6 +11,15 @@ log = logging.getLogger("daily_log_agent.categorize")
 _MAX_ATTEMPTS = 4
 _BACKOFF_SECONDS = (1, 2, 4)
 
+# If the configured Gemini model still fails after all of the above, try the
+# lighter-weight, reportedly less contended gemini-2.5-flash-lite before
+# giving up entirely. This fallback is per-call only - it's never persisted,
+# so the next AI call (and every future run) starts fresh with whatever
+# model GEMINI_MODEL is actually configured to.
+GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite"
+_FALLBACK_MAX_ATTEMPTS = 3
+_FALLBACK_BACKOFF_SECONDS = (1, 2)
+
 PROMPT_TEMPLATE = """You are preparing a Telegram-ready summary of a school Daily Log for a parent.
 
 Entry metadata:
@@ -107,19 +116,19 @@ def _build_circular_prompt(entry: dict, description: str, pdf_text: str) -> str:
     )
 
 
-def _with_retry(provider: str, call):
-    for attempt in range(_MAX_ATTEMPTS):
+def _with_retry(provider: str, call, max_attempts=_MAX_ATTEMPTS, backoff=_BACKOFF_SECONDS):
+    for attempt in range(max_attempts):
         try:
             return call()
         except Exception as exc:
-            if attempt == _MAX_ATTEMPTS - 1:
+            if attempt == max_attempts - 1:
                 raise
-            delay = _BACKOFF_SECONDS[attempt]
+            delay = backoff[attempt]
             log.warning(
                 "%s call failed (attempt %d/%d): %s - retrying in %ds",
                 provider,
                 attempt + 1,
-                _MAX_ATTEMPTS,
+                max_attempts,
                 exc,
                 delay,
             )
@@ -139,11 +148,28 @@ def _call_anthropic(client, model: str, prompt: str, max_tokens: int = 800) -> s
 
 
 def _call_gemini(client, model: str, prompt: str) -> str:
-    def call():
-        response = client.models.generate_content(model=model, contents=prompt)
+    def call_with(m):
+        response = client.models.generate_content(model=m, contents=prompt)
         return response.text.strip()
 
-    return _with_retry("Gemini", call)
+    try:
+        return _with_retry("Gemini", lambda: call_with(model))
+    except Exception:
+        if model == GEMINI_FALLBACK_MODEL:
+            raise  # already on the fallback model - nothing left to try
+        log.warning(
+            "Gemini model %r failed after %d attempts - falling back to %r for %d more attempts",
+            model,
+            _MAX_ATTEMPTS,
+            GEMINI_FALLBACK_MODEL,
+            _FALLBACK_MAX_ATTEMPTS,
+        )
+        return _with_retry(
+            "Gemini (fallback model)",
+            lambda: call_with(GEMINI_FALLBACK_MODEL),
+            max_attempts=_FALLBACK_MAX_ATTEMPTS,
+            backoff=_FALLBACK_BACKOFF_SECONDS,
+        )
 
 
 def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:
