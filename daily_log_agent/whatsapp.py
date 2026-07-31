@@ -18,12 +18,16 @@ _STATUS_CHECK_DELAY_SECONDS = 4
 _FAILURE_STATUSES = {"failed", "undelivered"}
 
 _BOLD_RE = re.compile(r"<b>(.*?)</b>", re.DOTALL)
+_PRE_RE = re.compile(r"<pre>(.*?)</pre>", re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def to_whatsapp_text(html_text: str) -> str:
-    """Converts the app's Telegram-style <b>...</b> HTML into WhatsApp's *bold* markdown."""
+    """Converts the app's Telegram-style HTML into WhatsApp's markdown: <b> to
+    *bold*, <pre> to a ```monospace``` block (used for raw extracted-content
+    fallbacks), everything else stripped."""
     text = _BOLD_RE.sub(r"*\1*", html_text)
+    text = _PRE_RE.sub(r"```\1```", text)
     return _TAG_RE.sub("", text)
 
 

@@ -1,3 +1,25 @@
+import logging
+import time
+
+log = logging.getLogger("daily_log_agent.categorize")
+
+# Gemini in particular has well-documented, frequently-reported 503 "model is
+# overloaded" errors (a Google-side capacity issue, not specific to any one
+# account/prompt) that typically clear up within a few seconds - retrying
+# with short backoff resolves most of them without falling through to the
+# raw-content fallback in main.py.
+_MAX_ATTEMPTS = 4
+_BACKOFF_SECONDS = (1, 2, 4)
+
+# If the configured Gemini model still fails after all of the above, try the
+# lighter-weight, reportedly less contended gemini-2.5-flash-lite before
+# giving up entirely. This fallback is per-call only - it's never persisted,
+# so the next AI call (and every future run) starts fresh with whatever
+# model GEMINI_MODEL is actually configured to.
+GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite"
+_FALLBACK_MAX_ATTEMPTS = 3
+_FALLBACK_BACKOFF_SECONDS = (1, 2)
+
 PROMPT_TEMPLATE = """You are preparing a Telegram-ready summary of a school Daily Log for a parent.
 
 Entry metadata:
@@ -94,18 +116,60 @@ def _build_circular_prompt(entry: dict, description: str, pdf_text: str) -> str:
     )
 
 
+def _with_retry(provider: str, call, max_attempts=_MAX_ATTEMPTS, backoff=_BACKOFF_SECONDS):
+    for attempt in range(max_attempts):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt == max_attempts - 1:
+                raise
+            delay = backoff[attempt]
+            log.warning(
+                "%s call failed (attempt %d/%d): %s - retrying in %ds",
+                provider,
+                attempt + 1,
+                max_attempts,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+
+
 def _call_anthropic(client, model: str, prompt: str, max_tokens: int = 800) -> str:
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    def call():
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    return _with_retry("Anthropic", call)
 
 
 def _call_gemini(client, model: str, prompt: str) -> str:
-    response = client.models.generate_content(model=model, contents=prompt)
-    return response.text.strip()
+    def call_with(m):
+        response = client.models.generate_content(model=m, contents=prompt)
+        return response.text.strip()
+
+    try:
+        return _with_retry("Gemini", lambda: call_with(model))
+    except Exception:
+        if model == GEMINI_FALLBACK_MODEL:
+            raise  # already on the fallback model - nothing left to try
+        log.warning(
+            "Gemini model %r failed after %d attempts - falling back to %r for %d more attempts",
+            model,
+            _MAX_ATTEMPTS,
+            GEMINI_FALLBACK_MODEL,
+            _FALLBACK_MAX_ATTEMPTS,
+        )
+        return _with_retry(
+            "Gemini (fallback model)",
+            lambda: call_with(GEMINI_FALLBACK_MODEL),
+            max_attempts=_FALLBACK_MAX_ATTEMPTS,
+            backoff=_FALLBACK_BACKOFF_SECONDS,
+        )
 
 
 def categorize_with_anthropic(client, model: str, entry: dict, pdf_text: str) -> dict:

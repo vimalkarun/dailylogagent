@@ -22,7 +22,16 @@ via Telegram, WhatsApp, or both (your choice).
    to an AI provider (Claude via Anthropic, or Gemini via Google - selected by
    the `AI_PROVIDER` setting) to produce a per-subject Daily Log summary with
    bolded Homework and Exam/Test Intimation sections, and a short Circular
-   summary that calls out any action required from the parent in bold.
+   summary that calls out any action required from the parent in bold. Each
+   AI call retries up to 3 times (1s/2s/4s backoff) on failure before giving
+   up - Gemini 2.5 Flash in particular has well-documented, widely-reported
+   `503 "model is overloaded"` errors (a Google-side capacity issue, not
+   specific to this app or any one account) that most often clear up within
+   a few seconds. If the configured Gemini model still fails after those 4
+   attempts, it falls back to the lighter `gemini-2.5-flash-lite` for up to 3
+   more attempts before giving up entirely. This fallback is per-call only -
+   it's never written back to config, so the very next AI call (and every
+   future run) starts fresh with whatever `GEMINI_MODEL` is actually set to.
 5. `notify.py` sends the Daily Log summary and the Circulars summary as two
    separate messages via whichever channel(s) `NOTIFICATION_CHANNEL` selects -
    `telegram.py` (Telegram Bot API), `whatsapp.py` (Twilio's WhatsApp API), or
@@ -32,7 +41,14 @@ via Telegram, WhatsApp, or both (your choice).
    token usage. When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI
    summarization (their portal text is sent as-is) and any PDF attachment is
    sent as a document instead of being summarized.
-6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
+6. **If the AI call itself fails** (e.g. a transient provider outage) but the
+   PDF/description was read successfully, the entry isn't silently dropped -
+   `main.py` falls back to sending the extracted content as-is: a formatted
+   table if `pdf_text.py`'s `extract_table_text()` detects one (the Daily
+   Log's own PDF is a table), otherwise the raw extracted text. Only a
+   genuine extraction failure (nothing readable at all) falls back to the
+   older "please check the portal directly" message.
+7. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
    `schedule:` trigger, which is "best effort" and can be delayed
