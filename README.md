@@ -32,7 +32,14 @@ via Telegram, WhatsApp, or both (your choice).
    token usage. When `CIRCULAR_DELIVERY_MODE=raw`, circulars skip AI
    summarization (their portal text is sent as-is) and any PDF attachment is
    sent as a document instead of being summarized.
-6. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
+6. **If the AI call itself fails** (e.g. a transient provider outage) but the
+   PDF/description was read successfully, the entry isn't silently dropped -
+   `main.py` falls back to sending the extracted content as-is: a formatted
+   table if `pdf_text.py`'s `extract_table_text()` detects one (the Daily
+   Log's own PDF is a table), otherwise the raw extracted text. Only a
+   genuine extraction failure (nothing readable at all) falls back to the
+   older "please check the portal directly" message.
+7. `.github/workflows/daily-log.yml` runs this via GitHub Actions, triggered
    daily at 17:00 IST by an **external** cron service calling the
    `workflow_dispatch` API (see setup step 5 below) - not GitHub's own
    `schedule:` trigger, which is "best effort" and can be delayed

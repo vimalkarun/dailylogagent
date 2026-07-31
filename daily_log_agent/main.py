@@ -13,7 +13,7 @@ from .categorize import (
 )
 from .config import Config, load_config
 from . import notify
-from .pdf_text import extract_text
+from .pdf_text import extract_table_text, extract_text
 from .portal import capture_circular_details, capture_pdf_bytes, get_todays_circulars, get_todays_entries, login
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -42,6 +42,17 @@ def _build_ai_client(config: Config):
         Anthropic(api_key=config.anthropic_api_key),
         config.anthropic_model,
     )
+
+
+def _fallback_content(pdf_bytes: bytes | None, pdf_text: str, extra_text: str = "") -> str:
+    """Used when AI summarization fails but the PDF/description was read fine -
+    shows that extracted content as-is instead of a generic "check the portal"
+    message, since we actually have something useful to show."""
+    table_text = extract_table_text(pdf_bytes) if pdf_bytes else None
+    content = "\n\n".join(t for t in (extra_text, table_text or pdf_text) if t)
+    if content:
+        return "⚠️ AI summarization is unavailable right now - showing the extracted content as-is:\n\n<pre>" + content + "</pre>"
+    return "⚠️ Could not read this automatically - please check the portal directly."
 
 
 def compose_message(target_date: date, results: list[dict]) -> str:
@@ -95,6 +106,8 @@ async def run() -> None:
             categorize_fn, circular_fn, ai_client, ai_model = _build_ai_client(config)
             log.info("Using AI provider: %s (model %s)", config.ai_provider, ai_model)
             for entry in entries:
+                pdf_bytes = None
+                pdf_text = ""
                 try:
                     pdf_bytes = await capture_pdf_bytes(context, page, entry["row_index"])
                     pdf_text = extract_text(pdf_bytes) if pdf_bytes else ""
@@ -105,13 +118,21 @@ async def run() -> None:
                         len(pdf_text),
                         pdf_text[:300],
                     )
-                    categorized = categorize_fn(ai_client, ai_model, entry, pdf_text)
                 except Exception:
-                    log.exception("Failed to process entry %r - sending metadata only", entry["title"])
-                    categorized = {
-                        "summary": "Could not read this entry's PDF automatically - please check the portal directly.",
-                    }
-                results.append({**entry, **categorized})
+                    log.exception("Failed to download/extract PDF for entry %r", entry["title"])
+
+                summary = None
+                if pdf_text:
+                    try:
+                        summary = categorize_fn(ai_client, ai_model, entry, pdf_text)["summary"]
+                    except Exception:
+                        log.exception(
+                            "Failed to summarize entry %r with AI - falling back to extracted content",
+                            entry["title"],
+                        )
+                if summary is None:
+                    summary = _fallback_content(pdf_bytes, pdf_text)
+                results.append({**entry, "summary": summary})
 
             circulars = await get_todays_circulars(page, target_date)
             log.info("Found %d circular(s) for %s", len(circulars), target_date)
@@ -119,6 +140,8 @@ async def run() -> None:
             for circular in circulars:
                 pdf_bytes = None
                 pdf_url = None
+                description = ""
+                pdf_text = ""
                 try:
                     details = await capture_circular_details(context, page, circular["row_index"])
                     description = details["description"]
@@ -132,14 +155,24 @@ async def run() -> None:
                         len(pdf_bytes) if pdf_bytes else 0,
                         len(pdf_text),
                     )
-                    if config.circular_delivery_mode == "raw":
-                        body = description or "(no description text on the portal)"
-                    else:
-                        categorized = circular_fn(ai_client, ai_model, circular, description, pdf_text)
-                        body = categorized["summary"]
                 except Exception:
-                    log.exception("Failed to process circular %r - sending metadata only", circular["title"])
-                    body = "Could not read this circular automatically - please check the portal directly."
+                    log.exception("Failed to fetch circular details for %r", circular["title"])
+
+                if config.circular_delivery_mode == "raw":
+                    body = description or "(no description text on the portal)"
+                else:
+                    body = None
+                    if description or pdf_text:
+                        try:
+                            body = circular_fn(ai_client, ai_model, circular, description, pdf_text)["summary"]
+                        except Exception:
+                            log.exception(
+                                "Failed to summarize circular %r with AI - falling back to extracted content",
+                                circular["title"],
+                            )
+                    if body is None:
+                        body = _fallback_content(pdf_bytes, pdf_text, extra_text=description)
+
                 circular_results.append({**circular, "body": body})
                 if config.circular_delivery_mode == "raw" and pdf_bytes:
                     circular_documents.append((circular["title"], pdf_bytes, pdf_url))
