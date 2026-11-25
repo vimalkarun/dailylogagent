@@ -50,6 +50,35 @@ async def login(context: BrowserContext, base_url: str, user_id: str, password: 
     if not await page.locator("#termsCheck").is_checked():
         await page.check("#termsCheck")
 
+    # Diagnostic-only: the previous force=True fix for the announcement
+    # overlay didn't resolve login (still on /Logon/Index afterwards per
+    # last run's logs) - the real click may be landing on a *different*,
+    # newer overlay/modal ("Scheduled Release Completed" system-upgrade
+    # notice, seen in that run's body text) that's now on top of the Sign
+    # In button instead. Dump candidate overlay/modal elements so the next
+    # occurrence is grounded in their real selectors, not another guess.
+    try:
+        overlay_info = await page.evaluate(
+            """
+            () => {
+                const keywords = ['overlay', 'modal', 'announce', 'release', 'popup', 'notice'];
+                return Array.from(document.querySelectorAll('*'))
+                    .filter(el => keywords.some(k => (el.id + ' ' + el.className).toLowerCase().includes(k)))
+                    .slice(0, 15)
+                    .map(el => ({
+                        tag: el.tagName,
+                        id: el.id,
+                        cls: el.className,
+                        visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
+                        html: el.outerHTML.slice(0, 400),
+                    }));
+            }
+            """
+        )
+        log.warning("login: candidate overlay/modal elements before clicking Sign In: %r", overlay_info)
+    except Exception:
+        log.warning("login: failed to collect overlay/modal diagnostics", exc_info=True)
+
     # force=True: Entab has since added a dismissible "announcement" overlay
     # (.entab-announcement-overlay inside #annoucmentLanding) on top of the
     # login form that can intercept pointer events and time out a normal
