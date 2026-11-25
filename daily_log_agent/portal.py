@@ -81,6 +81,24 @@ async def login(context: BrowserContext, base_url: str, user_id: str, password: 
     error_text = ""
     if await page.locator("#ErrorMessage").count():
         error_text = (await page.locator("#ErrorMessage").inner_text()).strip()
+
+    if not error_text:
+        # Diagnostic-only: nothing we already check for (dashboard, OTP modal,
+        # password-expiring interstitial, #ErrorMessage) matched. Log the
+        # actual page state so the next occurrence is grounded in real
+        # evidence instead of another guess.
+        body_preview = ""
+        try:
+            body_preview = (await page.locator("body").inner_text())[:1500]
+        except Exception:
+            pass
+        log.warning(
+            "login: unrecognized page state after submitting credentials - url=%r title=%r body_preview=%r",
+            page.url,
+            await page.title(),
+            body_preview,
+        )
+
     raise LoginError(f"Login failed: {error_text or 'unrecognized page state after submitting credentials'}")
 
 
