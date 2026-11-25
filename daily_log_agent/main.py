@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -201,7 +202,12 @@ def main() -> None:
         log.exception("Daily log agent failed")
         try:
             config = load_config()
-            notify.send_text(config, f"⚠️ School Daily Log Agent failed: {exc}")
+            # Escape the exception text: Playwright errors in particular embed
+            # a literal "Call log" with real page markup (e.g. the failing
+            # element's own <button ...> / <div ...> HTML), which Telegram's
+            # HTML parse_mode then tries to parse as actual tags and rejects
+            # with 400 Bad Request - silently losing the failure alert itself.
+            notify.send_text(config, f"⚠️ School Daily Log Agent failed: {html.escape(str(exc))}")
         except Exception:
             log.exception("Additionally failed to send failure alert")
         raise

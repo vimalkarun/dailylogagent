@@ -50,7 +50,13 @@ async def login(context: BrowserContext, base_url: str, user_id: str, password: 
     if not await page.locator("#termsCheck").is_checked():
         await page.check("#termsCheck")
 
-    await page.click("#btnLogin")
+    # force=True: Entab has since added a dismissible "announcement" overlay
+    # (.entab-announcement-overlay inside #annoucmentLanding) on top of the
+    # login form that can intercept pointer events and time out a normal
+    # click, even though the Sign In button itself is visible/enabled. A
+    # force click dispatches directly at the button regardless of what's
+    # layered on top, which is what its onclick handler needs to fire.
+    await page.click("#btnLogin", force=True)
 
     try:
         await page.wait_for_url(DASHBOARD_URL_RE, timeout=25000)
