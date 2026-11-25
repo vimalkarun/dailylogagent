@@ -38,6 +38,31 @@ class LoginError(RuntimeError):
     pass
 
 
+async def _dismiss_known_notices(page: Page) -> None:
+    """Best-effort: dismiss Entab's system-notice banners/toasts that can sit
+    on top of the login form and swallow a click on #btnLogin. Confirmed live
+    (2026-11-25): a #topNotice "glass-notice" banner present on page load,
+    dismissible via its own hideNotice() JS function; a second, separate
+    "Scheduled Release Completed" toast was also observed, but it appears on
+    a delay (not present when the page first loads) and its selector isn't
+    known yet, so it's handled generically here via any visible "close" icon.
+    Never raises - a missing dismiss target just means nothing to dismiss."""
+    try:
+        await page.evaluate("if (typeof hideNotice === 'function') hideNotice();")
+    except Exception:
+        pass
+
+    for selector in ["text=✕", "text=×"]:
+        try:
+            closers = page.locator(selector)
+            for i in range(await closers.count()):
+                closer = closers.nth(i)
+                if await closer.is_visible():
+                    await closer.click(timeout=2000)
+        except Exception:
+            pass
+
+
 async def login(context: BrowserContext, base_url: str, user_id: str, password: str) -> Page:
     page = await context.new_page()
     await page.goto(base_url, wait_until="networkidle")
@@ -50,71 +75,56 @@ async def login(context: BrowserContext, base_url: str, user_id: str, password: 
     if not await page.locator("#termsCheck").is_checked():
         await page.check("#termsCheck")
 
-    # Diagnostic-only: the previous force=True fix for the announcement
-    # overlay didn't resolve login (still on /Logon/Index afterwards per
-    # last run's logs) - the real click may be landing on a *different*,
-    # newer overlay/modal ("Scheduled Release Completed" system-upgrade
-    # notice, seen in that run's body text) that's now on top of the Sign
-    # In button instead. Dump candidate overlay/modal elements so the next
-    # occurrence is grounded in their real selectors, not another guess.
-    try:
-        overlay_info = await page.evaluate(
-            """
-            () => {
-                const keywords = ['overlay', 'modal', 'announce', 'release', 'popup', 'notice'];
-                return Array.from(document.querySelectorAll('*'))
-                    .filter(el => keywords.some(k => (el.id + ' ' + el.className).toLowerCase().includes(k)))
-                    .slice(0, 15)
-                    .map(el => ({
-                        tag: el.tagName,
-                        id: el.id,
-                        cls: el.className,
-                        visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
-                        html: el.outerHTML.slice(0, 400),
-                    }));
-            }
-            """
-        )
-        log.warning("login: candidate overlay/modal elements before clicking Sign In: %r", overlay_info)
-    except Exception:
-        log.warning("login: failed to collect overlay/modal diagnostics", exc_info=True)
+    await _dismiss_known_notices(page)
 
-    # force=True: Entab has since added a dismissible "announcement" overlay
-    # (.entab-announcement-overlay inside #annoucmentLanding) on top of the
-    # login form that can intercept pointer events and time out a normal
-    # click, even though the Sign In button itself is visible/enabled. A
-    # force click dispatches directly at the button regardless of what's
-    # layered on top, which is what its onclick handler needs to fire.
+    # force=True: on top of the notices just dismissed, Entab's login page
+    # can still have other overlay elements (confirmed live: several bare
+    # `.overlay` divs) that may intercept a normal click even once the known
+    # notices are gone. A force click dispatches directly at the button
+    # regardless of what else might be layered on top.
     await page.click("#btnLogin", force=True)
 
-    try:
-        await page.wait_for_url(DASHBOARD_URL_RE, timeout=25000)
-        return page
-    except PlaywrightTimeoutError:
-        pass
+    for attempt in range(2):
+        try:
+            await page.wait_for_url(DASHBOARD_URL_RE, timeout=25000)
+            return page
+        except PlaywrightTimeoutError:
+            pass
 
-    if await page.locator("#otpModal").is_visible():
-        raise LoginError(
-            "Portal requested an OTP/MFA code. This account has login-OTP enabled, "
-            "which this unattended agent cannot complete. Disable 'Login OTP Required' "
-            "for this account in the portal's Change Password screen, or this agent "
-            "cannot log in unattended."
-        )
+        if await page.locator("#otpModal").is_visible():
+            raise LoginError(
+                "Portal requested an OTP/MFA code. This account has login-OTP enabled, "
+                "which this unattended agent cannot complete. Disable 'Login OTP Required' "
+                "for this account in the portal's Change Password screen, or this agent "
+                "cannot log in unattended."
+            )
 
-    # Password-expiring-soon interstitial - dismiss it and continue.
-    if await page.locator("#btnContinue").is_visible():
-        await page.click("#btnContinue")
-        await page.wait_for_url(DASHBOARD_URL_RE, timeout=25000)
-        return page
+        # Password-expiring-soon interstitial - dismiss it and continue.
+        if await page.locator("#btnContinue").is_visible():
+            await page.click("#btnContinue")
+            await page.wait_for_url(DASHBOARD_URL_RE, timeout=25000)
+            return page
+
+        if attempt == 0 and "/Logon" in page.url:
+            # Still stuck on the login page with none of the above matching -
+            # a delayed notice/toast (like the "Scheduled Release Completed"
+            # one seen live) may have appeared after our first click and
+            # swallowed it. Dismiss again and retry the click once.
+            log.warning("login: still on %r after first Sign In click - dismissing notices and retrying once", page.url)
+            await _dismiss_known_notices(page)
+            await page.click("#btnLogin", force=True)
+            continue
+
+        break
 
     error_text = ""
     if await page.locator("#ErrorMessage").count():
         error_text = (await page.locator("#ErrorMessage").inner_text()).strip()
 
     if not error_text:
-        # Diagnostic-only: nothing we already check for (dashboard, OTP modal,
-        # password-expiring interstitial, #ErrorMessage) matched. Log the
-        # actual page state so the next occurrence is grounded in real
+        # Nothing we check for (dashboard, OTP modal, password-expiring
+        # interstitial, #ErrorMessage) matched even after the retry. Log the
+        # actual page state so any further occurrence is grounded in real
         # evidence instead of another guess.
         body_preview = ""
         try:
